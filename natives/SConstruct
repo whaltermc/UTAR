@@ -12,17 +12,19 @@ import os
 #     runtime/fmodstudioapi20214android/api
 #     - override with FMOD_SDK_ROOT or `scons fmod_sdk=/path/to/api`
 #
-# Usage (from natives/threen):
+# Usage (from natives/):
 #   scons platform=android target=template_release arch=arm64
 #
-# Libraries are written to bin/ and copied to natives/android/<abi>/, which the
-# app packages as jniLibs. If the FMOD SDK is missing, the other three
-# extensions still build and libfmod_extension is skipped with a warning.
+# Libraries are written to natives/bin/, objects to natives/build/, and both
+# are copied to natives/android/<abi>/ (packaged by the app as jniLibs). Keeping
+# the build directories at the natives root leaves each extension's source
+# folder untouched. If the FMOD SDK is missing, the other three extensions still
+# build and libfmod_extension is skipped with a warning.
 # ---------------------------------------------------------------------------
 
 PROJECT_DIR = os.path.abspath(Dir(".").abspath)
-REPO_ROOT = os.path.abspath(os.path.join(PROJECT_DIR, "..", ".."))
-NATIVES_DIR = os.path.abspath(os.path.join(PROJECT_DIR, ".."))
+REPO_ROOT = os.path.abspath(os.path.join(PROJECT_DIR, ".."))
+NATIVES_DIR = PROJECT_DIR
 ANDROID_OUTPUT = os.path.abspath(os.path.join(NATIVES_DIR, "android"))
 
 # godot-cpp's Android toolchain reads ANDROID_HOME from the process environment,
@@ -91,16 +93,16 @@ if not fmod_available:
     print("         skipping libfmod_extension; set FMOD_SDK_ROOT to the SDK's api/ directory.")
 
 env.Append(CPPPATH=[
-    "src/",
-    "../inkcpp/src/",
-    "../utinternal/src/",
-    "../fmod/src/",
+    "threen/src/",
+    "inkcpp/src/",
+    "utinternal/src/",
+    "fmod/src/",
     os.path.join(godot_cpp, "include"),
     os.path.join(godot_cpp, "gdextension"),
-    "../inkcpp/inkcpp/",
-    "../inkcpp/inkcpp/include/",
-    "../inkcpp/shared/private/",
-    "../inkcpp/shared/public/",
+    "inkcpp/inkcpp/",
+    "inkcpp/inkcpp/include/",
+    "inkcpp/shared/private/",
+    "inkcpp/shared/public/",
 ])
 
 # Statically link libc++ into every GDExtension so none of them depends on the
@@ -156,21 +158,23 @@ def build_library(libname, sources, extra_libs=None, extra_libpath=None, extra_c
     return library
 
 
-threen_sources = Glob("src/*.cpp")
+threen_sources = Glob("threen/src/*.cpp")
 if env["target"] in ["editor", "template_debug"]:
     try:
-        doc_data = env.GodotCPPDocData("src/gen/doc_data.gen.cpp", source=Glob("doc_classes/*.xml"))
+        doc_data = env.GodotCPPDocData(
+            "build/gen/doc_data.gen.cpp", source=Glob("threen/doc_classes/*.xml")
+        )
         threen_sources.append(doc_data)
     except AttributeError:
         print("Not including class reference as we're targeting a pre-4.3 baseline.")
 
-inkcpp_sources = Glob("../inkcpp/src/*.cpp")
-inkcpp_sources += Glob("../inkcpp/inkcpp/*.cpp")
-inkcpp_sources += Glob("../inkcpp/inkcpp/collections/*.cpp")
+inkcpp_sources = Glob("inkcpp/src/*.cpp")
+inkcpp_sources += Glob("inkcpp/inkcpp/*.cpp")
+inkcpp_sources += Glob("inkcpp/inkcpp/collections/*.cpp")
 
-internal_sources = Glob("../utinternal/src/*.cpp")
+internal_sources = Glob("utinternal/src/*.cpp")
 
-fmod_sources = Glob("../fmod/src/*.cpp")
+fmod_sources = Glob("fmod/src/*.cpp")
 
 # One shared library per GDExtension: no combined .so and no symlink aliases.
 # Each library only contains the code for the extension it belongs to, so a

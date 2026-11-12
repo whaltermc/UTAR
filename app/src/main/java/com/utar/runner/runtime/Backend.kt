@@ -14,12 +14,18 @@ enum class Backend(
     VULKAN(
         label = "Vulkan",
         summary = "Force the mobile renderer on Vulkan. Best on modern GPUs.",
-        engineArgs = listOf("--rendering-method", "mobile", "--rendering-driver", "vulkan"),
+        engineArgs = listOf(
+            "--rendering-method", "mobile", "--rendering-driver", "vulkan",
+            "--use_immersive",
+        ),
     ),
     GLES(
         label = "GLES",
         summary = "Force the OpenGL ES 3 compatibility renderer for older or unstable drivers.",
-        engineArgs = listOf("--rendering-method", "gl_compatibility", "--rendering-driver", "opengl3"),
+        engineArgs = listOf(
+            "--rendering-method", "gl_compatibility", "--rendering-driver", "opengl3",
+            "--use_immersive",
+        ),
     );
 
     companion object {

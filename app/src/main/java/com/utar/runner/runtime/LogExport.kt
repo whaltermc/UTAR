@@ -44,21 +44,42 @@ object LogExport {
         appendLine("=== Runner session log ===")
         appendLine(SessionLog.contents().ifBlank { "(empty)" })
         appendLine()
-        appendLine("=== Engine output (logcat, this process) ===")
+        appendLine("=== Engine output (logcat, launcher + game process) ===")
         appendLine(logcat().ifBlank { "(no engine output captured)" })
+        appendLine()
+        appendLine("=== Android crash log (logcat -b crash) ===")
+        appendLine(crashLogcat().ifBlank { "(no crash logcat captured)" })
         appendLine()
         appendLine("=== Game log (user://logs/godot.log) ===")
         appendLine(godotLog(context) ?: "(no Godot log file found)")
     }
 
-    private fun logcat(): String = runCatching {
-        val process = ProcessBuilder("logcat", "-d", "-v", "time", "--pid=${android.os.Process.myPid()}")
+    private fun logcat(): String {
+        val pids = LinkedHashSet<Int>()
+        pids += android.os.Process.myPid()
+        SessionLog.recordedProcessId().takeIf { it > 0 }?.let { pids += it }
+
+        val sections = pids.mapNotNull { pid ->
+            runCatching {
+                val process = ProcessBuilder("logcat", "-d", "-v", "time", "--pid=$pid")
+                    .redirectErrorStream(true)
+                    .start()
+                val output = process.inputStream.bufferedReader().use { it.readText() }
+                process.waitFor()
+                output.takeIf { it.isNotBlank() }?.let { "--- pid $pid ---\n$it" }
+            }.getOrNull()
+        }
+        return sections.joinToString("\n\n").takeLast(MAX_SECTION_CHARS)
+    }
+
+    private fun crashLogcat(): String = runCatching {
+        val process = ProcessBuilder("logcat", "-d", "-v", "time", "-b", "crash")
             .redirectErrorStream(true)
             .start()
         val output = process.inputStream.bufferedReader().use { it.readText() }
         process.waitFor()
-        output.takeLast(MAX_SECTION_CHARS)
-    }.getOrElse { "(logcat unavailable: ${it.message})" }
+        output.takeIf { it.isNotBlank() }
+    }.getOrNull() ?: ""
 
     private fun godotLog(context: Context): String? {
         val candidates = mutableListOf<File>()

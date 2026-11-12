@@ -1,6 +1,5 @@
 package com.utar.runner.core
 
-import java.io.BufferedInputStream
 import java.io.EOFException
 import java.io.File
 import java.io.FileInputStream
@@ -48,7 +47,11 @@ class PckPack private constructor(
         val isEncrypted: Boolean get() = (flags and PACK_FILE_ENCRYPTED) != 0
     }
 
-    data class RewriteResult(val replaced: List<String>, val bytesWritten: Long)
+    data class RewriteResult(
+        val replaced: List<String>,
+        val added: List<String>,
+        val bytesWritten: Long,
+    )
 
     /** Reads a single (small, unencrypted) entry into memory, e.g. a `.gdextension` text file. */
     fun readBytes(entry: Entry, limit: Long = DEFAULT_READ_LIMIT): ByteArray {
@@ -64,14 +67,16 @@ class PckPack private constructor(
 
     /**
      * Writes a copy of this pack to [target], replacing the payload of the entries named in
-     * [replacements]. Every other entry is copied byte for byte, keeping its recorded MD5.
+     * [replacements] and appending the files named in [additions] that the pack does not
+     * already contain. Every untouched entry is copied byte for byte, keeping its recorded MD5.
      *
      * MD5 hashes are trusted metadata for unmodified entries (Godot only verifies them for
-     * encrypted payloads) but are recomputed for anything we rewrite.
+     * encrypted payloads) but are recomputed for anything we rewrite or add.
      */
     fun rewriteInto(
         target: File,
         replacements: Map<String, ByteArray>,
+        additions: Map<String, ByteArray> = emptyMap(),
         onProgress: ((writtenBytes: Long) -> Unit)? = null,
     ): RewriteResult {
         require(target.absolutePath != file.absolutePath) { "Refusing to overwrite the source pack." }
@@ -79,42 +84,57 @@ class PckPack private constructor(
         val unknown = replacements.keys - knownPaths
         require(unknown.isEmpty()) { "Pack has no entries named ${unknown.joinToString()}" }
 
+        val effectiveReplacements = LinkedHashMap<String, ByteArray>(replacements)
+        val newFiles = LinkedHashMap<String, ByteArray>()
+        for ((path, payload) in additions) {
+            if (path in knownPaths) effectiveReplacements[path] = payload else newFiles[path] = payload
+        }
+
         data class Planned(
-            val entry: Entry,
+            val path: String,
             val payload: ByteArray?,
+            val sourceOffset: Long,
             val size: Long,
             val md5: ByteArray,
+            val flags: Int,
             val relativeOffset: Long,
         )
 
         var cursor = 0L
-        val planned = ArrayList<Planned>(entries.size)
-        for (entry in entries) {
-            val payload = replacements[entry.path]
-            val size = payload?.size?.toLong() ?: entry.size
-            val md5 = payload?.let { md5(it) } ?: entry.md5
+        val planned = ArrayList<Planned>(entries.size + newFiles.size)
+
+        fun plan(path: String, payload: ByteArray?, sourceOffset: Long, sourceSize: Long, sourceMd5: ByteArray, flags: Int) {
+            val size = payload?.size?.toLong() ?: sourceSize
+            val hash = payload?.let { md5(it) } ?: sourceMd5
             val start = align(cursor)
-            planned += Planned(entry, payload, size, md5, start)
+            planned += Planned(path, payload, sourceOffset, size, hash, flags, start)
             cursor = start + size
         }
 
+        for (entry in entries) {
+            plan(entry.path, effectiveReplacements[entry.path], entry.offset, entry.size, entry.md5, entry.flags)
+        }
+        for ((path, payload) in newFiles) {
+            plan(path, payload, 0L, payload.size.toLong(), md5(payload), 0)
+        }
+
         val indexSize = 4L + planned.sumOf { item ->
-            4L + paddedPathLength(item.entry.path) + 8L + 8L + 16L + 4L
+            4L + paddedPathLength(item.path) + 8L + 8L + 16L + 4L
         }
         val fileBase = align(HEADER_SIZE + indexSize)
 
         val index = ByteBuffer.allocate(indexSize.toInt()).order(ByteOrder.LITTLE_ENDIAN)
         index.putInt(planned.size)
         for (item in planned) {
-            val pathBytes = item.entry.path.toByteArray(Charsets.UTF_8)
-            val padded = paddedPathLength(item.entry.path)
+            val pathBytes = item.path.toByteArray(Charsets.UTF_8)
+            val padded = paddedPathLength(item.path)
             index.putInt(padded.toInt())
             index.put(pathBytes)
             repeat((padded - pathBytes.size).toInt()) { index.put(0) }
             index.putLong(item.relativeOffset)
             index.putLong(item.size)
             index.put(item.md5)
-            index.putInt(item.entry.flags)
+            index.putInt(item.flags)
         }
         check(index.position() == index.capacity()) { "Pack index size mismatch." }
         index.flip()
@@ -155,10 +175,10 @@ class PckPack private constructor(
                         written += payload.size
                     } else {
                         var remaining = item.size
-                        var position = item.entry.offset
+                        var position = item.sourceOffset
                         while (remaining > 0L) {
                             val copied = source.channel.transferTo(position, remaining, channel)
-                            if (copied <= 0L) throw IOException("Unexpected end of pack while copying ${item.entry.path}")
+                            if (copied <= 0L) throw IOException("Unexpected end of pack while copying ${item.path}")
                             position += copied
                             remaining -= copied
                             written += copied
@@ -169,7 +189,7 @@ class PckPack private constructor(
             }
         }
 
-        return RewriteResult(replacements.keys.toList(), target.length())
+        return RewriteResult(effectiveReplacements.keys.toList(), newFiles.keys.toList(), target.length())
     }
 
     companion object {
@@ -187,7 +207,7 @@ class PckPack private constructor(
         fun open(file: File): PckPack {
             require(file.isFile) { "Pack not found: ${file.name}" }
             FileInputStream(file).use { stream ->
-                val input = LeReader(BufferedInputStream(stream, 64 * 1024))
+                val input = LeReader(stream)
                 require(input.u32() == MAGIC.toLong()) { "Not a Godot pack: missing GDPC header." }
 
                 val version = input.u32().toInt()
@@ -256,22 +276,48 @@ class PckPack private constructor(
         }
     }
 
-    /** Small little-endian reader used for the header and index. */
+    /**
+     * Small little-endian reader used for the header and index. It owns a large buffer and decodes
+     * straight out of it: the previous version pulled the index one byte at a time through a
+     * synchronized BufferedInputStream, which is millions of locked calls on a big pack.
+     */
     private class LeReader(private val input: InputStream) {
 
+        private val buffer = ByteArray(256 * 1024)
+        private var position = 0
+        private var limit = 0
+
+        private fun fill(): Boolean {
+            val read = input.read(buffer, 0, buffer.size)
+            if (read <= 0) return false
+            position = 0
+            limit = read
+            return true
+        }
+
         fun u32(): Long {
-            var value = 0L
-            repeat(4) { shift ->
-                value = value or (byte().toLong() shl (shift * 8))
+            if (limit - position >= 4) {
+                val b = buffer
+                val p = position
+                position = p + 4
+                return (b[p].toLong() and 0xFF) or
+                    ((b[p + 1].toLong() and 0xFF) shl 8) or
+                    ((b[p + 2].toLong() and 0xFF) shl 16) or
+                    ((b[p + 3].toLong() and 0xFF) shl 24)
             }
+            var value = 0L
+            repeat(4) { shift -> value = value or (byte().toLong() shl (shift * 8)) }
             return value
         }
 
         fun u64(): Long {
-            var value = 0L
-            repeat(8) { shift ->
-                value = value or (byte().toLong() shl (shift * 8))
+            if (limit - position >= 8) {
+                val low = u32()
+                val high = u32()
+                return low or (high shl 32)
             }
+            var value = 0L
+            repeat(8) { shift -> value = value or (byte().toLong() shl (shift * 8)) }
             return value
         }
 
@@ -279,17 +325,18 @@ class PckPack private constructor(
             val data = ByteArray(length)
             var offset = 0
             while (offset < length) {
-                val read = input.read(data, offset, length - offset)
-                if (read < 0) throw EOFException("Unexpected end of pack index.")
-                offset += read
+                if (position >= limit && !fill()) throw EOFException("Unexpected end of pack index.")
+                val chunk = minOf(length - offset, limit - position)
+                System.arraycopy(buffer, position, data, offset, chunk)
+                position += chunk
+                offset += chunk
             }
             return data
         }
 
         private fun byte(): Int {
-            val value = input.read()
-            if (value < 0) throw EOFException("Unexpected end of pack header.")
-            return value
+            if (position >= limit && !fill()) throw EOFException("Unexpected end of pack header.")
+            return buffer[position++].toInt() and 0xFF
         }
     }
 }
