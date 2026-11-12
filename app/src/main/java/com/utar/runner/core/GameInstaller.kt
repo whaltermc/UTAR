@@ -1,0 +1,181 @@
+package com.utar.runner.core
+
+import android.content.Context
+import android.net.Uri
+import android.os.Build
+import android.provider.OpenableColumns
+import com.utar.runner.runtime.RunnerPrefs
+import com.utar.runner.runtime.SessionLog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+
+/**
+ * Installs a game pack into the app's private storage and rebuilds it so the Android builds
+ * of the game's GDExtensions are loaded instead of the desktop-only ones.
+ *
+ * The copy is what makes loading fast: the engine reads the pack from internal storage
+ * instead of streaming it out of a content provider on every launch.
+ */
+class GameInstaller(private val context: Context) {
+
+    data class Outcome(
+        val packFile: File,
+        val sourceName: String,
+        val sizeBytes: Long,
+        val entryCount: Int,
+        val plans: List<GdextensionRewriter.Plan>,
+        val patchedCount: Int,
+    )
+
+    fun installedPack(): File? = packFile().takeIf { it.isFile }
+
+    fun clear() {
+        workDirectory().deleteRecursively()
+        RunnerPrefs(context).clearInstall()
+    }
+
+    suspend fun install(
+        uri: Uri,
+        fallbackName: String?,
+        onStage: (stage: String, progress: Float) -> Unit,
+    ): Outcome = withContext(Dispatchers.IO) {
+        val directory = workDirectory().apply { mkdirs() }
+        val incoming = File(directory, INCOMING_NAME)
+        val target = File(directory, PACK_NAME)
+        val patched = File(directory, "$PACK_NAME.tmp")
+        listOf(incoming, patched).forEach { if (it.exists()) it.delete() }
+
+        val sourceName = displayName(uri) ?: fallbackName?.takeIf { it.isNotBlank() } ?: "game.pck"
+        SessionLog.i("Install started: $sourceName ($uri)")
+
+        onStage("Copying into private storage", 0.02f)
+        val expectedSize = contentSize(uri)
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            incoming.outputStream().buffered().use { output ->
+                val buffer = ByteArray(COPY_BUFFER)
+                var copied = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    output.write(buffer, 0, read)
+                    copied += read
+                    if (expectedSize != null && expectedSize > 0L) {
+                        val fraction = (copied.toFloat() / expectedSize).coerceIn(0f, 1f)
+                        onStage("Copying into private storage", 0.02f + 0.60f * fraction)
+                    }
+                }
+            }
+        } ?: throw IllegalStateException("The selected file could not be read.")
+
+        val copiedSize = incoming.length()
+        if (copiedSize < 16L) {
+            incoming.delete()
+            throw IllegalStateException("That file is too small to be a Godot pack.")
+        }
+
+        val pack = try {
+            PckPack.open(incoming)
+        } catch (error: Throwable) {
+            incoming.delete()
+            throw error
+        }
+        SessionLog.i(
+            "Pack: engine ${pack.engineVersion}, format v${pack.packVersion}, " +
+                "${pack.entries.size} entries, $copiedSize bytes",
+        )
+
+        val natives = NativeLibrarySet.fromDirectory(
+            File(context.applicationInfo.nativeLibraryDir.orEmpty()),
+            deviceAbiDirectory(),
+        )
+        SessionLog.i(
+            "Android extension libraries: " +
+                natives.allLibraries.joinToString().ifEmpty { "none (drop builds into natives/android/<abi>/)" },
+        )
+
+        val plans = mutableListOf<GdextensionRewriter.Plan>()
+        val replacements = LinkedHashMap<String, ByteArray>()
+        for (entry in pack.entries) {
+            if (!entry.path.endsWith(".gdextension", ignoreCase = true)) continue
+            if (entry.isEncrypted || entry.size > MAX_CONFIG_BYTES) {
+                SessionLog.w("Skipping unreadable extension config ${entry.path}")
+                continue
+            }
+            val original = String(pack.readBytes(entry), Charsets.UTF_8)
+            val plan = GdextensionRewriter.plan(entry.path, original, natives)
+            plans += plan
+            if (plan.patched) {
+                replacements[entry.path] = plan.text.toByteArray(Charsets.UTF_8)
+                SessionLog.i(
+                    "Extension ${entry.path} -> " +
+                        plan.libraries.entries.joinToString { "${it.key}/${it.value}" },
+                )
+            } else {
+                SessionLog.w("No Android build matched ${entry.path}; it will fail to load on device")
+            }
+        }
+
+        onStage("Patching Android extensions", 0.68f)
+        val rewritten = if (replacements.isEmpty()) {
+            if (target.exists()) target.delete()
+            check(incoming.renameTo(target) || runCatching { incoming.copyTo(target, overwrite = true) }.isSuccess) {
+                "Couldn't move the pack into place."
+            }
+            if (incoming.exists()) incoming.delete()
+            emptyList()
+        } else {
+            val result = pack.rewriteInto(patched, replacements) { written ->
+                val fraction = if (copiedSize > 0L) (written.toFloat() / copiedSize).coerceIn(0f, 1f) else 0f
+                onStage("Patching Android extensions", 0.68f + 0.27f * fraction)
+            }
+            if (target.exists()) target.delete()
+            check(patched.renameTo(target)) { "Couldn't finalise the patched pack." }
+            incoming.delete()
+            result.replaced
+        }
+
+        onStage("Finishing up", 0.97f)
+        SessionLog.i("Install complete: ${target.length()} bytes, ${rewritten.size} config(s) rewritten")
+        Outcome(
+            packFile = target,
+            sourceName = sourceName,
+            sizeBytes = target.length(),
+            entryCount = pack.entries.size,
+            plans = plans,
+            patchedCount = rewritten.size,
+        )
+    }
+
+    private fun packFile(): File = File(workDirectory(), PACK_NAME)
+
+    private fun workDirectory(): File = File(context.filesDir, WORK_DIRECTORY)
+
+    private fun deviceAbiDirectory(): String = when (Build.SUPPORTED_ABIS.firstOrNull()) {
+        "arm64-v8a" -> "arm64-v8a"
+        "armeabi-v7a", "armeabi" -> "armeabi-v7a"
+        "x86_64" -> "x86_64"
+        "x86" -> "x86"
+        else -> "arm64-v8a"
+    }
+
+    private fun contentSize(uri: Uri): Long? = runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
+        }
+    }.getOrNull()
+
+    private fun displayName(uri: Uri): String? = runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
+        }
+    }.getOrNull()
+
+    companion object {
+        private const val WORK_DIRECTORY = "game"
+        private const val PACK_NAME = "game.pck"
+        private const val INCOMING_NAME = "incoming.pck"
+        private const val MAX_CONFIG_BYTES = 512L * 1024
+        private const val COPY_BUFFER = 1 shl 20
+    }
+}
