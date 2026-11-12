@@ -61,6 +61,32 @@ class PckPackTest {
         assertArrayEquals(binary, reopened.readBytes(reopened.entries[2]))
     }
 
+    @Test
+    fun `appends new files without disturbing the existing entries`() {
+        val source = temporaryFolder.newFile("small.pck")
+        val original = "one".toByteArray()
+        writePack(source, linkedMapOf("res://a.txt" to original))
+        val pack = PckPack.open(source)
+
+        val shim = "extends RefCounted\n".toByteArray()
+        val replacement = "two".toByteArray()
+        val target = temporaryFolder.newFile("with-additions.pck")
+        val result = pack.rewriteInto(
+            target,
+            mapOf("res://a.txt" to replacement),
+            mapOf("res://utar_natives/json_utils.gd" to shim),
+        )
+
+        assertEquals(listOf("res://utar_natives/json_utils.gd"), result.added)
+        val reopened = PckPack.open(target)
+        assertEquals(
+            listOf("res://a.txt", "res://utar_natives/json_utils.gd"),
+            reopened.entries.map { it.path },
+        )
+        assertArrayEquals(replacement, reopened.readBytes(reopened.entries[0]))
+        assertArrayEquals(shim, reopened.readBytes(reopened.entries[1]))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `rejects packs the 4_1 runtime cannot load`() {
         val source = temporaryFolder.newFile("future.pck")

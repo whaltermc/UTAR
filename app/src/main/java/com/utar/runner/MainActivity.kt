@@ -14,12 +14,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ImmersiveMode.apply(this)
         setContent {
             UtarTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
                     HomeScreen()
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        ImmersiveMode.apply(this)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) ImmersiveMode.apply(this)
     }
 }

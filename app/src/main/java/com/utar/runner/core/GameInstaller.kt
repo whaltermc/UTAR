@@ -32,7 +32,10 @@ class GameInstaller(private val context: Context) {
 
     fun clear() {
         workDirectory().deleteRecursively()
-        RunnerPrefs(context).clearInstall()
+        RunnerPrefs(context).apply {
+            clearInstall()
+            resetRendererOverride()
+        }
     }
 
     suspend fun install(
@@ -85,10 +88,19 @@ class GameInstaller(private val context: Context) {
                 "${pack.entries.size} entries, $copiedSize bytes",
         )
 
-        val natives = NativeLibrarySet.fromDirectory(
-            File(context.applicationInfo.nativeLibraryDir.orEmpty()),
-            deviceAbiDirectory(),
-        )
+        val apks = buildList {
+            context.applicationInfo.sourceDir?.let { add(File(it)) }
+            context.applicationInfo.splitSourceDirs?.forEach { add(File(it)) }
+        }
+        val packaged = NativeLibrarySet.fromApks(apks, deviceAbiDirectory())
+        val natives = if (!packaged.isEmpty) {
+            packaged
+        } else {
+            NativeLibrarySet.fromDirectory(
+                File(context.applicationInfo.nativeLibraryDir.orEmpty()),
+                deviceAbiDirectory(),
+            )
+        }
         SessionLog.i(
             "Android extension libraries: " +
                 natives.allLibraries.joinToString().ifEmpty { "none (drop builds into natives/android/<abi>/)" },
@@ -116,34 +128,71 @@ class GameInstaller(private val context: Context) {
             }
         }
 
+        val additions = LinkedHashMap<String, ByteArray>()
+        val storeEntry = pack.entries.firstOrNull { it.path == STORE_SCRIPT }
+        if (storeEntry != null && !storeEntry.isEncrypted && storeEntry.size <= MAX_CONFIG_BYTES) {
+            val original = String(pack.readBytes(storeEntry), Charsets.UTF_8)
+            if (JSON_UTILS_DECLARATION in original) {
+                val shim = readJsonShim()
+                if (shim != null) {
+                    replacements[STORE_SCRIPT] = original
+                        .replace(JSON_UTILS_DECLARATION, JSON_SHIM_DECLARATION)
+                        .toByteArray(Charsets.UTF_8)
+                    additions[JSON_SHIM_PATH] = shim
+                    SessionLog.i("Store.gd: replaced the jsonutils GDExtension with the GDScript shim")
+                } else {
+                    SessionLog.w("jsonutils shim missing from APK assets; Store.gd will fail to load")
+                }
+            }
+        }
+
+        val patchedConfigs = plans.count { it.patched }
+
         onStage("Patching Android extensions", 0.68f)
-        val rewritten = if (replacements.isEmpty()) {
+        var addedFiles = 0
+        if (replacements.isEmpty() && additions.isEmpty()) {
             if (target.exists()) target.delete()
             check(incoming.renameTo(target) || runCatching { incoming.copyTo(target, overwrite = true) }.isSuccess) {
                 "Couldn't move the pack into place."
             }
             if (incoming.exists()) incoming.delete()
-            emptyList()
         } else {
-            val result = pack.rewriteInto(patched, replacements) { written ->
+            // Drop the previous pack first: rewriting needs the incoming copy plus the new
+            // file, and a multi-gigabyte pack otherwise leaves three copies on internal storage.
+            if (target.exists()) target.delete()
+            val result = pack.rewriteInto(patched, replacements, additions) { written ->
                 val fraction = if (copiedSize > 0L) (written.toFloat() / copiedSize).coerceIn(0f, 1f) else 0f
                 onStage("Patching Android extensions", 0.68f + 0.27f * fraction)
             }
-            if (target.exists()) target.delete()
             check(patched.renameTo(target)) { "Couldn't finalise the patched pack." }
             incoming.delete()
-            result.replaced
+            addedFiles = result.added.size
+        }
+
+        // A different pack has its own renderer setting; the remembered original is stale now.
+        val prefs = RunnerPrefs(context)
+        prefs.resetRendererOverride()
+
+        // Pre-align for the currently selected backend so the first launch does not need to index.
+        onStage("Aligning renderer", 0.95f)
+        runCatching {
+            ProjectSettingsOverride.prepare(context, target, prefs.backend)
+        }.onFailure {
+            SessionLog.w("Could not pre-align renderer for ${prefs.backend.label}: ${it.message}")
         }
 
         onStage("Finishing up", 0.97f)
-        SessionLog.i("Install complete: ${target.length()} bytes, ${rewritten.size} config(s) rewritten")
+        SessionLog.i(
+            "Install complete: ${target.length()} bytes, $patchedConfigs config(s) rewritten" +
+                if (addedFiles > 0) ", $addedFiles file(s) added" else "",
+        )
         Outcome(
             packFile = target,
             sourceName = sourceName,
             sizeBytes = target.length(),
             entryCount = pack.entries.size,
             plans = plans,
-            patchedCount = rewritten.size,
+            patchedCount = patchedConfigs,
         )
     }
 
@@ -171,11 +220,21 @@ class GameInstaller(private val context: Context) {
         }
     }.getOrNull()
 
+    private fun readJsonShim(): ByteArray? = runCatching {
+        context.assets.open(JSON_SHIM_ASSET).use { it.readBytes() }
+    }.getOrNull()
+
     companion object {
         private const val WORK_DIRECTORY = "game"
         private const val PACK_NAME = "game.pck"
         private const val INCOMING_NAME = "incoming.pck"
         private const val MAX_CONFIG_BYTES = 512L * 1024
         private const val COPY_BUFFER = 1 shl 20
+
+        private const val STORE_SCRIPT = "res://Store.gd"
+        private const val JSON_UTILS_DECLARATION = "JsonUtils.new()"
+        private const val JSON_SHIM_PATH = "res://utar_natives/json_utils.gd"
+        private const val JSON_SHIM_DECLARATION = "preload(\"res://utar_natives/json_utils.gd\").new()"
+        private const val JSON_SHIM_ASSET = "json_utils.gd"
     }
 }

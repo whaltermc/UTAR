@@ -29,6 +29,8 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
 
+
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -47,6 +49,7 @@ android {
     }
 
     sourceSets["main"].jniLibs.srcDir(rootProject.file("natives/android"))
+    sourceSets["main"].assets.srcDir(rootProject.file("natives/utap_shims"))
 }
 
 // Prefer a locally built export template when the project ships one,
