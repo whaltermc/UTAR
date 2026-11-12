@@ -1,0 +1,190 @@
+#!/usr/bin/env python
+
+import os
+
+# ---------------------------------------------------------------------------
+# Builds the Until Then GDExtensions for Android (or macOS, for editor use).
+#
+# Requires:
+#   * godot-cpp for the matching engine (4.1.4), at natives/godot-cpp
+#     - override with GODOT_CPP_PATH or `scons godot_cpp=/path/to/godot-cpp`
+#   * FMOD Studio API 2.02.14 for Android at
+#     runtime/fmodstudioapi20214android/api
+#     - override with FMOD_SDK_ROOT or `scons fmod_sdk=/path/to/api`
+#
+# Usage (from natives/threen):
+#   scons platform=android target=template_release arch=arm64
+#
+# Libraries are written to bin/ and copied to natives/android/<abi>/, which the
+# app packages as jniLibs. If the FMOD SDK is missing, the other three
+# extensions still build and libfmod_extension is skipped with a warning.
+# ---------------------------------------------------------------------------
+
+PROJECT_DIR = os.path.abspath(Dir(".").abspath)
+REPO_ROOT = os.path.abspath(os.path.join(PROJECT_DIR, "..", ".."))
+NATIVES_DIR = os.path.abspath(os.path.join(PROJECT_DIR, ".."))
+ANDROID_OUTPUT = os.path.abspath(os.path.join(NATIVES_DIR, "android"))
+
+# godot-cpp's Android toolchain reads ANDROID_HOME from the process environment,
+# so expose the usual SDK variables (and any scons ANDROID_HOME=... override) there.
+for _name in ("ANDROID_HOME", "ANDROID_SDK_ROOT", "ANDROID_NDK_ROOT", "ANDROID_NDK_HOME"):
+    if ARGUMENTS.get(_name):
+        os.environ[_name] = ARGUMENTS[_name]
+if "ANDROID_HOME" not in os.environ and os.environ.get("ANDROID_SDK_ROOT"):
+    os.environ["ANDROID_HOME"] = os.environ["ANDROID_SDK_ROOT"]
+if "ANDROID_NDK_ROOT" not in os.environ and os.environ.get("ANDROID_NDK_HOME"):
+    os.environ["ANDROID_NDK_ROOT"] = os.environ["ANDROID_NDK_HOME"]
+
+ABI_BY_ARCH = {
+    "arm64": "arm64-v8a",
+    "arm32": "armeabi-v7a",
+    "x86_64": "x86_64",
+    "x86_32": "x86",
+}
+
+
+def find_godot_cpp():
+    candidates = [
+        ARGUMENTS.get("godot_cpp", ""),
+        os.environ.get("GODOT_CPP_PATH", ""),
+        os.path.join(PROJECT_DIR, "godot-cpp"),
+        os.path.join(NATIVES_DIR, "godot-cpp"),
+        os.path.join(REPO_ROOT, "godot-cpp"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(os.path.join(candidate, "SConstruct")):
+            return candidate
+    return None
+
+
+godot_cpp = find_godot_cpp()
+if godot_cpp is None:
+    print("error: godot-cpp not found.")
+    print("       Put a Godot 4.1.4 godot-cpp checkout at natives/godot-cpp,")
+    print("       or set GODOT_CPP_PATH to one.")
+    Exit(1)
+
+env = SConscript(os.path.join(godot_cpp, "SConstruct"))
+
+# --- FMOD Studio SDK --------------------------------------------------------
+
+fmod_api = (
+    os.environ.get("FMOD_SDK_ROOT")
+    or ARGUMENTS.get("fmod_sdk", "")
+    or os.path.join(REPO_ROOT, "runtime", "fmodstudioapi20214android", "api")
+)
+fmod_api = os.path.abspath(fmod_api)
+
+abi_dir = ABI_BY_ARCH[env["arch"]] if "arch" in env else "arm64-v8a"
+
+FMOD_CORE_INC = os.path.join(fmod_api, "core", "inc")
+FMOD_STUDIO_INC = os.path.join(fmod_api, "studio", "inc")
+FMOD_CORE_LIB = os.path.join(fmod_api, "core", "lib", abi_dir)
+FMOD_STUDIO_LIB = os.path.join(fmod_api, "studio", "lib", abi_dir)
+
+fmod_available = all(
+    os.path.isdir(path)
+    for path in (FMOD_CORE_INC, FMOD_STUDIO_INC, FMOD_CORE_LIB, FMOD_STUDIO_LIB)
+)
+if not fmod_available:
+    print("warning: FMOD Studio SDK for %s not found under %s" % (abi_dir, fmod_api))
+    print("         skipping libfmod_extension; set FMOD_SDK_ROOT to the SDK's api/ directory.")
+
+env.Append(CPPPATH=[
+    "src/",
+    "../inkcpp/src/",
+    "../utinternal/src/",
+    "../fmod/src/",
+    os.path.join(godot_cpp, "include"),
+    os.path.join(godot_cpp, "gdextension"),
+    "../inkcpp/inkcpp/",
+    "../inkcpp/inkcpp/include/",
+    "../inkcpp/shared/private/",
+    "../inkcpp/shared/public/",
+])
+
+# Statically link libc++ into every GDExtension so none of them depends on the
+# (possibly ABI-mismatched) libc++_shared.so shipped with the Godot template.
+env.Append(LINKFLAGS=["-static-libstdc++"])
+
+outputs = []
+
+
+def object_for(local_env, libname, source, object_dir):
+    """Compile objects into a per-library/per-ABI directory.
+
+    Keeps arm64 and x86_64 builds from sharing object files, and avoids
+    reusing any stale .os left over from an earlier cross-compile.
+    """
+    path = os.path.normpath(str(source))
+    stem = os.path.splitext(os.path.basename(path))[0]
+    parent = os.path.basename(os.path.dirname(path)) or "root"
+    target = os.path.join(object_dir, libname, parent, stem + ".os")
+    return local_env.SharedObject(target, source)
+
+
+def build_library(libname, sources, extra_libs=None, extra_libpath=None, extra_cpppath=None):
+    if env["platform"] == "macos":
+        platlibname = "{}.{}.{}".format(libname, env["platform"], env["target"])
+        library = env.SharedLibrary(
+            "bin/{}.framework/{}".format(platlibname, platlibname),
+            source=sources,
+        )
+        outputs.append(library)
+        return library
+
+    local_env = env.Clone()
+    if extra_cpppath:
+        local_env.Append(CPPPATH=extra_cpppath)
+    if extra_libs:
+        local_env.Append(LIBS=extra_libs)
+    if extra_libpath:
+        local_env.Append(LIBPATH=extra_libpath)
+
+    suffix = env["SHLIBSUFFIX"] if "SHLIBSUFFIX" in env else ".so"
+    arch = env["arch"] if "arch" in env else "arm64"
+    object_dir = os.path.join("build", env["platform"], env["target"], arch)
+    objects = [object_for(local_env, libname, source, object_dir) for source in sources]
+    library = local_env.SharedLibrary("bin/{}{}".format(libname, suffix), source=objects)
+    outputs.append(library)
+
+    # Stage the Android build where the app packages jniLibs from.
+    if env["platform"] == "android" and env["target"] in ["template_release", "template_debug"]:
+        target = os.path.join(ANDROID_OUTPUT, abi_dir, os.path.basename(str(library[0])))
+        outputs.append(local_env.InstallAs(target, library))
+
+    return library
+
+
+threen_sources = Glob("src/*.cpp")
+if env["target"] in ["editor", "template_debug"]:
+    try:
+        doc_data = env.GodotCPPDocData("src/gen/doc_data.gen.cpp", source=Glob("doc_classes/*.xml"))
+        threen_sources.append(doc_data)
+    except AttributeError:
+        print("Not including class reference as we're targeting a pre-4.3 baseline.")
+
+inkcpp_sources = Glob("../inkcpp/src/*.cpp")
+inkcpp_sources += Glob("../inkcpp/inkcpp/*.cpp")
+inkcpp_sources += Glob("../inkcpp/inkcpp/collections/*.cpp")
+
+internal_sources = Glob("../utinternal/src/*.cpp")
+
+fmod_sources = Glob("../fmod/src/*.cpp")
+
+# One shared library per GDExtension: no combined .so and no symlink aliases.
+# Each library only contains the code for the extension it belongs to, so a
+# missing entry symbol cannot silently bind to an unrelated extension.
+build_library("libthreen", threen_sources)
+build_library("libinkcpp", inkcpp_sources)
+build_library("libinternal", internal_sources)
+if fmod_available:
+    build_library(
+        "libfmod_extension",
+        fmod_sources,
+        extra_cpppath=[FMOD_CORE_INC, FMOD_STUDIO_INC],
+        extra_libs=["fmod", "fmodstudio"],
+        extra_libpath=[FMOD_CORE_LIB, FMOD_STUDIO_LIB],
+    )
+
+Default(outputs)

@@ -1,0 +1,16 @@
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# natives build intermediates (natives/android/<abi>/ is an app input, keep it)
+natives/godot-cpp/
+natives/threen/bin/
+natives/threen/build/
+natives/threen/.sconsign.dblite
