@@ -155,6 +155,29 @@ class GameInstaller(private val context: Context) {
             }
         }
 
+        val sceneViewEntry = pack.entries.firstOrNull { it.path == SCENE_VIEW_SCRIPT }
+        if (sceneViewEntry != null && !sceneViewEntry.isEncrypted && sceneViewEntry.size <= MAX_CONFIG_BYTES) {
+            val original = String(pack.readBytes(sceneViewEntry), Charsets.UTF_8)
+            val (patchedSource, changes) = ScriptPatcher.trimLoadThreadedRequestArgs(original)
+            if (changes.isNotEmpty()) {
+                replacements[SCENE_VIEW_SCRIPT] = patchedSource.toByteArray(Charsets.UTF_8)
+                for ((originalCall, trimmedCall) in changes) {
+                    SessionLog.i(
+                        "SceneView.gd: trimmed load_threaded_request args: " +
+                            "original='$originalCall' trimmed='$trimmedCall'",
+                    )
+                }
+            }
+        }
+
+        val steamEntry = pack.entries.firstOrNull { it.path == STEAM_PLATFORM_SCRIPT }
+        if (steamEntry != null && !steamEntry.isEncrypted && steamEntry.size <= MAX_CONFIG_BYTES) {
+            val original = String(pack.readBytes(steamEntry), Charsets.UTF_8)
+            val patched = STEAM_PLATFORM_STUB
+            replacements[STEAM_PLATFORM_SCRIPT] = patched.toByteArray(Charsets.UTF_8)
+            SessionLog.i("SteamPlatform.gd: replaced with stub (Steam GDExtension has no Android build)")
+        }
+
         val patchedConfigs = plans.count { it.patched }
 
         onStage("Patching Android extensions", 0.68f)
@@ -243,6 +266,62 @@ class GameInstaller(private val context: Context) {
         private const val COPY_BUFFER = 1 shl 20
 
         private const val STORE_SCRIPT = "res://Store.gd"
+        private const val SCENE_VIEW_SCRIPT = "res://ui/components/Game/SceneView/SceneView.gd"
+        private const val STEAM_PLATFORM_SCRIPT = "res://components/DistPlatform/SteamPlatform.gd"
+        private const val STEAM_PLATFORM_STUB = """
+extends "DistPlatform.gd"
+
+const DLC_MAP = {
+    "RedVelvet": 3902750,
+}
+
+var is_online: bool = false
+var steam_id: int = 0
+var is_owned: bool = false
+
+func setup() -> bool:
+    print("Steam not available on Android")
+    return true
+
+func get_dlc_id(name: String):
+    return str(DLC_MAP[name])
+
+func _process(delta):
+    pass
+
+func install_dlc_handler(f: Callable):
+    pass
+
+func get_owned_dlcs():
+    return []
+
+func is_dlc_owned(dlc_id: String):
+    return false
+
+func open_uri(uri: String):
+    if uri.begins_with("steam://"):
+        return
+    OS.shell_open(uri)
+
+
+func unlock_achievement(id: String):
+    pass
+
+func is_xss():
+    return false
+
+func get_username():
+    return ""
+
+func set_custom_state(state: String, scene: String):
+    pass
+
+func open_store_page(s):
+    pass
+
+func reboot():
+    super.reboot()
+"""
         private const val JSON_UTILS_DECLARATION = "JsonUtils.new()"
         private const val JSON_SHIM_PATH = "res://utar_natives/json_utils.gd"
         private const val JSON_SHIM_DECLARATION = "preload(\"res://utar_natives/json_utils.gd\").new()"

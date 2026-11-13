@@ -1,0 +1,3 @@
+[submodule "natives/fmod-for-godot"]
+	path = natives/fmod-for-godot
+	url = https://github.com/MadFlyFish/fmod-for-godot.git

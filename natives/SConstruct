@@ -105,6 +105,10 @@ env.Append(CPPPATH=[
     "inkcpp/shared/public/",
 ])
 
+# Platform-specific defines needed by fmod-for-godot source
+if env["platform"] == "android":
+    env.Append(CPPDEFINES=["FMOD_ANDROID"])
+
 # Statically link libc++ into every GDExtension so none of them depends on the
 # (possibly ABI-mismatched) libc++_shared.so shipped with the Godot template.
 env.Append(LINKFLAGS=["-static-libstdc++"])
@@ -175,6 +179,13 @@ inkcpp_sources += Glob("inkcpp/inkcpp/collections/*.cpp")
 internal_sources = Glob("utinternal/src/*.cpp")
 
 fmod_sources = Glob("fmod/src/*.cpp")
+# Exclude editor-only source from root Glob for non-editor builds
+if env["target"] not in ["editor", "template_debug"]:
+    fmod_sources = [s for s in fmod_sources if "editor" not in str(s)]
+fmod_sources += Glob("fmod/src/api/*.cpp")
+fmod_sources += Glob("fmod/src/misc/*.cpp")
+fmod_sources += Glob("fmod/src/scene/*.cpp")
+fmod_sources += Glob("fmod/src/utils/*.cpp")
 
 # One shared library per GDExtension: no combined .so and no symlink aliases.
 # Each library only contains the code for the extension it belongs to, so a
