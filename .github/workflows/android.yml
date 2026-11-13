@@ -23,12 +23,11 @@ jobs:
           submodules: recursive
 
       - name: Set up Android SDK and NDK
-        uses: nttld/action-setup-android@v2
+        uses: android-actions/setup-android@v3
         with:
           api-level: 34
           ndk-version: 23.2.8568313
           cmake-version: 3.22.1
-          platform-tools: true
           build-tools: 34.0.0
 
       - name: Install dependencies
