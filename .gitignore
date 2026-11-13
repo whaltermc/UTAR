@@ -15,3 +15,5 @@ natives/bin/
 natives/build/
 natives/.sconsign.dblite
 runtime/
+*.log
+utar-log-*.txt

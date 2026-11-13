@@ -1,0 +1,61 @@
+name: Android Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+  ANDROID_NDK_ROOT: ${{ github.workspace }}/android-sdk/ndk/23.2.8568313
+  ANDROID_HOME: ${{ github.workspace }}/android-sdk
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs="-Xmx2g"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Android SDK and NDK
+        uses: nttld/action-setup-android@v2
+        with:
+          api-level: 34
+          ndk-version: 23.2.8568313
+          cmake-version: 3.22.1
+          platform-tools: true
+          build-tools: 34.0.0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y scons python3 git curl unzip wget
+
+      - name: Clone godot-cpp submodule for fmod-for-godot
+        working-directory: ${{ github.workspace }}/natives/fmod-for-godot/addons/FMOD/native
+        run: |
+          if [ ! -d godot-cpp ]; then
+            git clone --depth 1 -b 4.1 https://github.com/godotengine/godot-cpp.git godot-cpp
+          fi
+
+      - name: Build Godot native extensions (GDExtensions)
+        working-directory: ${{ github.workspace }}/natives
+        run: |
+          scons platform=android target=template_release arch=arm64 -j$(nproc)
+
+      - name: Build Android APK
+        working-directory: ${{ github.workspace }}
+        run: |
+          ./gradlew :app:assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: utar-apk
+          path: ${{ github.workspace }}/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
