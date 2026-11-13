@@ -227,6 +227,7 @@ private fun HeldTextKey(
     opacity: Float,
     view: View,
     width: Dp = KeySize,
+    modifier: Modifier = Modifier,
 ) {
     HeldKey(
         keyCode = keyCode,
@@ -235,6 +236,7 @@ private fun HeldTextKey(
         description = label,
         view = view,
         width = width,
+        modifier = modifier,
     ) { color ->
         Text(
             text = label,
@@ -359,6 +361,17 @@ fun TouchControlsOverlay(
                     }
                 }
             }
+
+            // Top-right: ESC key.
+            HeldTextKey(
+                label = "ESC",
+                keyCode = KeyEvent.KEYCODE_ESCAPE,
+                onVirtualKey = onVirtualKey,
+                opacity = overlayOpacity,
+                view = view,
+                modifier = Modifier.align(Alignment.TopEnd),
+                width = KeySize,
+            )
 
             // Bottom-left: WASD cluster.
             AnimatedVisibility(

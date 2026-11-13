@@ -15,23 +15,25 @@ namespace ink::config {
 	/// if required you can set them to -x then, the system will use dynamic
 	/// allocation for this type, with an initial size of x.
 	static constexpr int limitGlobalVariables = -50;
-	static constexpr int limitThreadDepth = -10;
-	static constexpr int limitEvalStackDepth = -20;
-	static constexpr int limitContainerDepth = -20;
+	static constexpr int limitThreadDepth = -50;
+	static constexpr int limitEvalStackDepth = -100;
+	static constexpr int limitContainerDepth = -100;
 	/// number of simultaneous active tags
-	static constexpr int limitActiveTags = 10;
+	static constexpr int limitActiveTags = -100;
 	// temporary variables and callstack;
-	static constexpr int limitRuntimeStack = -20;
+	static constexpr int limitRuntimeStack = -100;
 	// references  and callstack
-	static constexpr int limitReferenceStack = -20;
+	static constexpr int limitReferenceStack = -100;
 	// max number of elements in one output (a string is one element)
 	// no dynamic support now! (FIXME)
-	static constexpr int limitOutputSize = 200;
+	static constexpr int limitOutputSize = 500;
 	// max number of choices per choice
-	static constexpr int maxChoices = 10;
+	static constexpr int maxChoices = -100;
 	// max number of list types, and there total amount of flags
 	static constexpr int maxListTypes = -20;
 	static constexpr int maxFlags = -200;
 	// number of max initelized lists
 	static constexpr int maxLists = -50;
+	// max number of strings in the string table
+	static constexpr int limitStringTable = 1000;
 }

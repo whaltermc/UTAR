@@ -5,6 +5,9 @@
 #include "choice.h"
 #include "ink_bridge.h"
 
+#include <exception>
+#include <string>
+
 using namespace godot;
 
 void InkRunner::_bind_methods() {
@@ -44,10 +47,18 @@ Ref<InkRunner> InkRunner::from_ink_story(const Ref<InkStory> &p_story, bool p_ne
 	result.instantiate();
 	result->ink_story = p_story;
 
-	if (p_new_state) {
-		result->runner = p_story->get_story()->new_runner();
-	} else {
-		result->runner = p_story->get_story()->new_runner(p_story->get_globals());
+	try {
+		if (p_new_state) {
+			result->runner = p_story->get_story()->new_runner();
+		} else {
+			result->runner = p_story->get_story()->new_runner(p_story->get_globals());
+		}
+	} catch (const std::exception &e) {
+		ERR_PRINT(String("inkcpp: ") + e.what());
+		return Ref<InkRunner>();
+	} catch (...) {
+		ERR_PRINT("inkcpp: unknown exception creating runner");
+		return Ref<InkRunner>();
 	}
 
 	if (!result->runner) {
@@ -63,12 +74,18 @@ Array InkRunner::_read_tags() {
 		return tags;
 	}
 
-	size_t count = runner->num_tags();
-	for (size_t i = 0; i < count; ++i) {
-		const char *tag = runner->get_tag(i);
-		if (tag) {
-			tags.push_back(String::utf8(tag));
+	try {
+		size_t count = runner->num_tags();
+		for (size_t i = 0; i < count; ++i) {
+			const char *tag = runner->get_tag(i);
+			if (tag) {
+				tags.push_back(String::utf8(tag));
+			}
 		}
+	} catch (const std::exception &e) {
+		ERR_PRINT(String("inkcpp: ") + e.what());
+	} catch (...) {
+		ERR_PRINT("inkcpp: unknown exception reading tags");
 	}
 	return tags;
 }
@@ -84,14 +101,20 @@ void InkRunner::_reset_priming() {
 
 void InkRunner::_prime() {
 	primed_once = true;
-	if (forced_end || !runner || !runner->can_continue()) {
-		return;
-	}
+	try {
+		if (forced_end || !runner || !runner->can_continue()) {
+			return;
+		}
 
-	std::string line = runner->getline();
-	primed_line = String::utf8(line.c_str());
-	primed_tags = _read_tags();
-	has_primed_line = true;
+		std::string line = runner->getline();
+		primed_line = String::utf8(line.c_str());
+		primed_tags = _read_tags();
+		has_primed_line = true;
+	} catch (const std::exception &e) {
+		ERR_PRINT(String("inkcpp: ") + e.what());
+	} catch (...) {
+		ERR_PRINT("inkcpp: unknown exception priming");
+	}
 }
 
 Array InkRunner::get_global_tags() {
@@ -112,18 +135,25 @@ Array InkRunner::get_tags_at_path(const String &p_path) {
 	}
 
 	_reset_priming();
-	CharString path = p_path.utf8();
-	runner->move_to(ink::hash_string(path.get_data()));
+	try {
+		CharString path = p_path.utf8();
+		runner->move_to(ink::hash_string(path.get_data()));
 
-	if (runner->can_continue()) {
-		std::string line = runner->getline();
-		primed_line = String::utf8(line.c_str());
-		primed_tags = _read_tags();
-		has_primed_line = true;
-		primed_once = true;
-		return primed_tags;
+		if (runner->can_continue()) {
+			std::string line = runner->getline();
+			primed_line = String::utf8(line.c_str());
+			primed_tags = _read_tags();
+			has_primed_line = true;
+			primed_once = true;
+			return primed_tags;
+		}
+		return _read_tags();
+	} catch (const std::exception &e) {
+		ERR_PRINT(String("inkcpp: ") + e.what());
+	} catch (...) {
+		ERR_PRINT("inkcpp: unknown exception in get_tags_at_path");
 	}
-	return _read_tags();
+	return Array();
 }
 
 void InkRunner::move_to_path(const String &p_path) {
@@ -131,8 +161,14 @@ void InkRunner::move_to_path(const String &p_path) {
 		return;
 	}
 	_reset_priming();
-	CharString path = p_path.utf8();
-	runner->move_to(ink::hash_string(path.get_data()));
+	try {
+		CharString path = p_path.utf8();
+		runner->move_to(ink::hash_string(path.get_data()));
+	} catch (const std::exception &e) {
+		ERR_PRINT(String("inkcpp: ") + e.what());
+	} catch (...) {
+		ERR_PRINT("inkcpp: unknown exception moving to path");
+	}
 }
 
 bool InkRunner::can_continue() {
@@ -142,7 +178,14 @@ bool InkRunner::can_continue() {
 	if (has_primed_line) {
 		return true;
 	}
-	return runner && runner->can_continue();
+	try {
+		return runner && runner->can_continue();
+	} catch (const std::exception &e) {
+		ERR_PRINT(String("inkcpp: ") + e.what());
+	} catch (...) {
+		ERR_PRINT("inkcpp: unknown exception in can_continue");
+	}
+	return false;
 }
 
 String InkRunner::advance() {
@@ -158,13 +201,20 @@ String InkRunner::advance() {
 		return line;
 	}
 
-	if (!runner || !runner->can_continue()) {
-		return String();
-	}
+	try {
+		if (!runner || !runner->can_continue()) {
+			return String();
+		}
 
-	std::string line = runner->getline();
-	current_tags = _read_tags();
-	return String::utf8(line.c_str());
+		std::string line = runner->getline();
+		current_tags = _read_tags();
+		return String::utf8(line.c_str());
+	} catch (const std::exception &e) {
+		ERR_PRINT(String("inkcpp: ") + e.what());
+	} catch (...) {
+		ERR_PRINT("inkcpp: unknown exception advancing");
+	}
+	return String();
 }
 
 Array InkRunner::get_choices() {
@@ -173,9 +223,15 @@ Array InkRunner::get_choices() {
 		return choices;
 	}
 
-	for (const ink::runtime::choice *c = runner->begin(); c != runner->end(); ++c) {
-		const char *text = c->text();
-		choices.push_back(String::utf8(text ? text : ""));
+	try {
+		for (const ink::runtime::choice *c = runner->begin(); c != runner->end(); ++c) {
+			const char *text = c->text();
+			choices.push_back(String::utf8(text ? text : ""));
+		}
+	} catch (const std::exception &e) {
+		ERR_PRINT(String("inkcpp: ") + e.what());
+	} catch (...) {
+		ERR_PRINT("inkcpp: unknown exception getting choices");
 	}
 	return choices;
 }
@@ -185,7 +241,13 @@ void InkRunner::choose_choice_index(int p_index) {
 		return;
 	}
 
-	runner->choose((size_t)p_index);
+	try {
+		runner->choose((size_t)p_index);
+	} catch (const std::exception &e) {
+		ERR_PRINT(String("inkcpp: ") + e.what());
+	} catch (...) {
+		ERR_PRINT("inkcpp: unknown exception choosing index");
+	}
 	has_primed_line = false;
 	primed_line = String();
 	primed_tags.clear();
@@ -206,8 +268,14 @@ void InkRunner::bind_external_function(const String &p_name, const Callable &p_c
 		return;
 	}
 
-	CharString name = p_name.utf8();
-	runner->bind_raw(ink::hash_string(name.get_data()), new GdInkFunction(p_callable));
+	try {
+		CharString name = p_name.utf8();
+		runner->bind_raw(ink::hash_string(name.get_data()), new GdInkFunction(p_callable));
+	} catch (const std::exception &e) {
+		ERR_PRINT(String("inkcpp: ") + e.what());
+	} catch (...) {
+		ERR_PRINT("inkcpp: unknown exception binding external function");
+	}
 }
 
 Ref<InkStory> InkRunner::get_ink_story() {

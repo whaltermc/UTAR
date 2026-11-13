@@ -16,7 +16,7 @@
         instead of a frozen black window. (values-v31 also makes the Android 12+ splash transparent.)
     -->
     <style name="Theme.Utar.Game" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
-        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowBackground">@color/utar_background</item>
         <item name="android:windowDisablePreview">true</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
