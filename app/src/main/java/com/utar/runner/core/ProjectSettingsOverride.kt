@@ -1,8 +1,10 @@
 package com.utar.runner.core
 
 import android.content.Context
+import android.os.SystemClock
 import com.utar.runner.runtime.Backend
 import com.utar.runner.runtime.RunnerPrefs
+import com.utar.runner.runtime.SessionLog
 import java.io.File
 import java.io.RandomAccessFile
 
@@ -48,15 +50,21 @@ object ProjectSettingsOverride {
      * caller should tell the user that backend isn't available for this package.
      */
     fun prepare(context: Context, pack: File, backend: Backend): Boolean {
+        val prepareStarted = SystemClock.elapsedRealtime()
         val prefs = RunnerPrefs(context)
 
         // Nothing to do when the pack is exactly as we last left it for this backend.
-        if (prefs.rendererOverrideStamp == stamp(pack, backend)) return true
+        if (prefs.rendererOverrideStamp == stamp(pack, backend)) {
+            SessionLog.mark("ProjectSettingsOverride: stamp matches, skipping alignment (${backend.name})")
+            return true
+        }
 
+        SessionLog.mark("ProjectSettingsOverride: resolving renderer slot for ${backend.name}")
         val slot = resolveSlot(prefs, pack) ?: run {
             // Pack keeps the engine default (no key stored). Auto/Vulkan are fine; GLES is not.
             if (backend != Backend.GLES) {
                 prefs.rendererOverrideStamp = stamp(pack, backend)
+                SessionLog.mark("ProjectSettingsOverride: no renderer_method key, ${backend.name} needs no patch")
                 return true
             }
             return false
@@ -73,9 +81,11 @@ object ProjectSettingsOverride {
         }?.takeIf { it.length == slot.valueLength } ?: return false
 
         if (desired != slot.currentValue) {
+            SessionLog.mark("ProjectSettingsOverride: writing renderer method '${desired}' at offset ${slot.valueOffset}")
             writeString(pack, slot, desired)
         }
         prefs.rendererOverrideStamp = stamp(pack, backend)
+        SessionLog.mark("ProjectSettingsOverride: alignment complete in ${SystemClock.elapsedRealtime() - prepareStarted}ms")
         return true
     }
 
@@ -105,9 +115,11 @@ object ProjectSettingsOverride {
      * Falls back to a one-time locate (and then caches the result).
      */
     private fun resolveSlot(prefs: RunnerPrefs, pack: File): MethodSlot? {
+        val resolveStarted = SystemClock.elapsedRealtime()
         val cached = prefs.rendererSlot()
         if (cached != null) {
             val current = readStringAt(pack, cached.valueOffset, cached.valueLength) ?: return null
+            SessionLog.mark("ProjectSettingsOverride: cached renderer slot hit (offset=${cached.valueOffset}, len=${cached.valueLength}) in ${SystemClock.elapsedRealtime() - resolveStarted}ms")
             return MethodSlot(cached.path, cached.valueOffset, cached.valueLength, current)
         }
 
@@ -115,6 +127,7 @@ object ProjectSettingsOverride {
         prefs.storeRendererSlot(
             RunnerPrefs.RendererSlot(located.path, located.valueOffset, located.valueLength),
         )
+        SessionLog.mark("ProjectSettingsOverride: renderer slot located (offset=${located.valueOffset}, len=${located.valueLength}) in ${SystemClock.elapsedRealtime() - resolveStarted}ms")
         return located
     }
 

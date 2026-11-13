@@ -3,6 +3,7 @@ package com.utar.runner.core
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import com.utar.runner.runtime.RunnerPrefs
 import com.utar.runner.runtime.SessionLog
@@ -53,6 +54,7 @@ class GameInstaller(private val context: Context) {
         SessionLog.i("Install started: $sourceName ($uri)")
 
         onStage("Copying into private storage", 0.02f)
+        val copyStarted = SystemClock.elapsedRealtime()
         val expectedSize = contentSize(uri)
         context.contentResolver.openInputStream(uri)?.use { input ->
             incoming.outputStream().buffered().use { output ->
@@ -70,6 +72,7 @@ class GameInstaller(private val context: Context) {
                 }
             }
         } ?: throw IllegalStateException("The selected file could not be read.")
+        SessionLog.mark("Install: pack copied in ${SystemClock.elapsedRealtime() - copyStarted}ms")
 
         val copiedSize = incoming.length()
         if (copiedSize < 16L) {
@@ -77,22 +80,25 @@ class GameInstaller(private val context: Context) {
             throw IllegalStateException("That file is too small to be a Godot pack.")
         }
 
+        val packOpenStarted = SystemClock.elapsedRealtime()
         val pack = try {
             PckPack.open(incoming)
         } catch (error: Throwable) {
             incoming.delete()
             throw error
         }
+        SessionLog.mark("Install: pack opened/indexed in ${SystemClock.elapsedRealtime() - packOpenStarted}ms")
         SessionLog.i(
             "Pack: engine ${pack.engineVersion}, format v${pack.packVersion}, " +
                 "${pack.entries.size} entries, $copiedSize bytes",
         )
 
+        val nativesScanStarted = SystemClock.elapsedRealtime()
         val apks = buildList {
             context.applicationInfo.sourceDir?.let { add(File(it)) }
             context.applicationInfo.splitSourceDirs?.forEach { add(File(it)) }
         }
-        val packaged = NativeLibrarySet.fromApks(apks, deviceAbiDirectory())
+        val packaged = NativeLibrarySet.fromApksCached(apks, deviceAbiDirectory(), context.cacheDir)
         val natives = if (!packaged.isEmpty) {
             packaged
         } else {
@@ -101,6 +107,7 @@ class GameInstaller(private val context: Context) {
                 deviceAbiDirectory(),
             )
         }
+        SessionLog.mark("Install: native library discovery in ${SystemClock.elapsedRealtime() - nativesScanStarted}ms")
         SessionLog.i(
             "Android extension libraries: " +
                 natives.allLibraries.joinToString().ifEmpty { "none (drop builds into natives/android/<abi>/)" },
@@ -108,6 +115,7 @@ class GameInstaller(private val context: Context) {
 
         val plans = mutableListOf<GdextensionRewriter.Plan>()
         val replacements = LinkedHashMap<String, ByteArray>()
+        val gdextStart = SystemClock.elapsedRealtime()
         for (entry in pack.entries) {
             if (!entry.path.endsWith(".gdextension", ignoreCase = true)) continue
             if (entry.isEncrypted || entry.size > MAX_CONFIG_BYTES) {
@@ -127,6 +135,7 @@ class GameInstaller(private val context: Context) {
                 SessionLog.w("No Android build matched ${entry.path}; it will fail to load on device")
             }
         }
+        SessionLog.mark("Install: GDExtension matching for ${plans.size} config(s) in ${SystemClock.elapsedRealtime() - gdextStart}ms")
 
         val additions = LinkedHashMap<String, ByteArray>()
         val storeEntry = pack.entries.firstOrNull { it.path == STORE_SCRIPT }
@@ -157,13 +166,13 @@ class GameInstaller(private val context: Context) {
             }
             if (incoming.exists()) incoming.delete()
         } else {
-            // Drop the previous pack first: rewriting needs the incoming copy plus the new
-            // file, and a multi-gigabyte pack otherwise leaves three copies on internal storage.
             if (target.exists()) target.delete()
+            val rewriteStarted = SystemClock.elapsedRealtime()
             val result = pack.rewriteInto(patched, replacements, additions) { written ->
                 val fraction = if (copiedSize > 0L) (written.toFloat() / copiedSize).coerceIn(0f, 1f) else 0f
                 onStage("Patching Android extensions", 0.68f + 0.27f * fraction)
             }
+            SessionLog.mark("Install: pack rewrite in ${SystemClock.elapsedRealtime() - rewriteStarted}ms")
             check(patched.renameTo(target)) { "Couldn't finalise the patched pack." }
             incoming.delete()
             addedFiles = result.added.size
@@ -175,11 +184,13 @@ class GameInstaller(private val context: Context) {
 
         // Pre-align for the currently selected backend so the first launch does not need to index.
         onStage("Aligning renderer", 0.95f)
+        val alignStarted = SystemClock.elapsedRealtime()
         runCatching {
             ProjectSettingsOverride.prepare(context, target, prefs.backend)
         }.onFailure {
             SessionLog.w("Could not pre-align renderer for ${prefs.backend.label}: ${it.message}")
         }
+        SessionLog.mark("Install: renderer alignment in ${SystemClock.elapsedRealtime() - alignStarted}ms")
 
         onStage("Finishing up", 0.97f)
         SessionLog.i(

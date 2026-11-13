@@ -1,9 +1,15 @@
 package com.utar.runner.core
 
+import java.io.EOFException
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.InputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.channels.FileChannel
+import java.security.MessageDigest
 import java.util.zip.ZipFile
 
 /**
@@ -68,6 +74,31 @@ class NativeLibrarySet internal constructor(
          * reliable route.
          */
         fun fromApks(apks: List<File>, abiDirectory: String): NativeLibrarySet {
+            return fromApksCached(apks, abiDirectory, null)
+        }
+
+        /**
+         * Same as [fromApks] but caches the ELF symbol scan results on disk so re-scanning
+         * is skipped when the APKs and ABI are unchanged. [cacheDir] may be null, in which
+         * case no disk cache is used.
+         */
+        fun fromApksCached(
+            apks: List<File>,
+            abiDirectory: String,
+            cacheDir: File?,
+        ): NativeLibrarySet {
+            val cache = cacheDir?.let { NativeLibraryCache.forApks(it, apks, abiDirectory) }
+            val cached = cache?.load()
+            if (cached != null) {
+                return NativeLibrarySet(cached.libraries)
+            }
+
+            val result = scanApks(apks, abiDirectory)
+            cache?.save(result.libraries)
+            return result
+        }
+
+        private fun scanApks(apks: List<File>, abiDirectory: String): NativeLibrarySet {
             val libraries = LinkedHashMap<String, NativeLibrary>()
             for (apk in apks) {
                 if (!apk.isFile) continue
@@ -196,6 +227,177 @@ class NativeLibrarySet internal constructor(
             var end = offset
             while (end < table.size && table[end] != 0.toByte()) end++
             return String(table, offset, end - offset, Charsets.UTF_8)
+        }
+
+        class LeReader(private val input: InputStream) {
+
+            private val buffer = ByteArray(256 * 1024)
+            private var position = 0
+            private var limit = 0
+
+            private fun fill(): Boolean {
+                val read = input.read(buffer, 0, buffer.size)
+                if (read <= 0) return false
+                position = 0
+                limit = read
+                return true
+            }
+
+            fun u32(): Long {
+                if (limit - position >= 4) {
+                    val b = buffer
+                    val p = position
+                    position = p + 4
+                    return (b[p].toLong() and 0xFF) or
+                        ((b[p + 1].toLong() and 0xFF) shl 8) or
+                        ((b[p + 2].toLong() and 0xFF) shl 16) or
+                        ((b[p + 3].toLong() and 0xFF) shl 24)
+                }
+                var value = 0L
+                repeat(4) { shift -> value = value or (byte().toLong() shl (shift * 8)) }
+                return value
+            }
+
+            fun u64(): Long {
+                if (limit - position >= 8) {
+                    val low = u32()
+                    val high = u32()
+                    return low or (high shl 32)
+                }
+                var value = 0L
+                repeat(8) { shift -> value = value or (byte().toLong() shl (shift * 8)) }
+                return value
+            }
+
+            fun bytes(length: Int): ByteArray {
+                val data = ByteArray(length)
+                var offset = 0
+                while (offset < length) {
+                    if (position >= limit && !fill()) throw EOFException("Unexpected end of data.")
+                    val chunk = minOf(length - offset, limit - position)
+                    System.arraycopy(buffer, position, data, offset, chunk)
+                    position += chunk
+                    offset += chunk
+                }
+                return data
+            }
+
+            private fun byte(): Int {
+                if (position >= limit && !fill()) throw EOFException("Unexpected end of data.")
+                return buffer[position++].toInt() and 0xFF
+            }
+        }
+
+        /**
+         * On-disk cache for ELF symbol scan results. Keyed by a digest of the APK paths, sizes,
+         * modification times and the target ABI, so an app update invalidates the cache.
+         */
+        private class NativeLibraryCache private constructor(private val cacheFile: File) {
+
+            companion object {
+                private const val CACHE_VERSION = 1
+                private const val CACHE_MAGIC = 0x4E4C5343 // "NLSC"
+
+                fun forApks(cacheDir: File, apks: List<File>, abiDirectory: String): NativeLibraryCache {
+                    val digest = MessageDigest.getInstance("MD5")
+                    digest.update(abiDirectory.toByteArray(Charsets.UTF_8))
+                    for (apk in apks.sortedBy { it.absolutePath }) {
+                        digest.update(apk.absolutePath.toByteArray(Charsets.UTF_8))
+                        digest.update(apk.length().toString().toByteArray(Charsets.UTF_8))
+                        digest.update(apk.lastModified().toString().toByteArray(Charsets.UTF_8))
+                    }
+                    val hex = digest.digest().joinToString("") { "%02x".format(it) }
+                    return NativeLibraryCache(File(cacheDir, "native_libs_$hex.cache"))
+                }
+            }
+
+            data class CachedLibraries(
+                val libraries: Map<String, List<NativeLibrary>>,
+            )
+
+            fun load(): CachedLibraries? = runCatching {
+                FileInputStream(cacheFile).use { stream ->
+                    val input = LeReader(stream)
+                    if (input.u32().toInt() != CACHE_MAGIC) return@runCatching null
+                    if (input.u32().toInt() != CACHE_VERSION) return@runCatching null
+                    val abiCount = input.u32().toInt()
+                    val result = LinkedHashMap<String, List<NativeLibrary>>()
+                    repeat(abiCount) {
+                        val abiLength = input.u32().toInt()
+                        val abi = String(input.bytes(abiLength), Charsets.UTF_8)
+                        val libCount = input.u32().toInt()
+                        val libs = ArrayList<NativeLibrary>(libCount)
+                        repeat(libCount) {
+                            val nameLength = input.u32().toInt()
+                            val name = String(input.bytes(nameLength), Charsets.UTF_8)
+                            val symCount = input.u32().toInt()
+                            val syms = HashSet<String>(symCount)
+                            repeat(symCount) {
+                                val symLength = input.u32().toInt()
+                                syms += String(input.bytes(symLength), Charsets.UTF_8)
+                            }
+                            libs += NativeLibrary(name, syms)
+                        }
+                        result[abi] = libs
+                    }
+                    CachedLibraries(result)
+                }
+            }.getOrNull()
+
+            fun save(libraries: Map<String, List<NativeLibrary>>) = runCatching {
+                cacheFile.parentFile?.mkdirs()
+                FileOutputStream(cacheFile).use { output ->
+                    val buffer = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN)
+                    buffer.putInt(CACHE_MAGIC)
+                    buffer.putInt(CACHE_VERSION)
+                    buffer.putInt(libraries.size)
+                    buffer.flip()
+                    writeFully(output.channel, buffer)
+
+                    for ((abi, libs) in libraries) {
+                        val abiBytes = abi.toByteArray(Charsets.UTF_8)
+                        val abiBuffer = ByteBuffer.allocate(4 + abiBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+                        abiBuffer.putInt(abiBytes.size)
+                        abiBuffer.put(abiBytes)
+                        abiBuffer.flip()
+                        writeFully(output.channel, abiBuffer)
+
+                        val libBuffer = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+                        libBuffer.putInt(libs.size)
+                        libBuffer.flip()
+                        writeFully(output.channel, libBuffer)
+
+                        for (lib in libs) {
+                            val nameBytes = lib.fileName.toByteArray(Charsets.UTF_8)
+                            val nameBuffer = ByteBuffer.allocate(4 + nameBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+                            nameBuffer.putInt(nameBytes.size)
+                            nameBuffer.put(nameBytes)
+                            nameBuffer.flip()
+                            writeFully(output.channel, nameBuffer)
+
+                            val symBuffer = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+                            symBuffer.putInt(lib.entrySymbols.size)
+                            symBuffer.flip()
+                            writeFully(output.channel, symBuffer)
+
+                            for (sym in lib.entrySymbols) {
+                                val symBytes = sym.toByteArray(Charsets.UTF_8)
+                                val symEntryBuffer = ByteBuffer.allocate(4 + symBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+                                symEntryBuffer.putInt(symBytes.size)
+                                symEntryBuffer.put(symBytes)
+                                symEntryBuffer.flip()
+                                writeFully(output.channel, symEntryBuffer)
+                            }
+                        }
+                    }
+                }
+            }
+
+            private fun writeFully(channel: FileChannel, buffer: ByteBuffer) {
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer)
+                }
+            }
         }
     }
 }

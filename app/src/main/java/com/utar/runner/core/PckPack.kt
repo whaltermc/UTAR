@@ -206,6 +206,15 @@ class PckPack private constructor(
 
         fun open(file: File): PckPack {
             require(file.isFile) { "Pack not found: ${file.name}" }
+            val cache = PckPackCache.forFile(file)
+            val cached = cache.load()
+            if (cached != null && cached.fileSize == file.length() && cached.lastModified == file.lastModified()) {
+                val entries = cached.entries.map { e ->
+                    Entry(e.path, e.offset, e.size, e.md5, e.flags)
+                }
+                return PckPack(file, cached.version, cached.major, cached.minor, cached.patch, entries)
+            }
+
             FileInputStream(file).use { stream ->
                 val input = LeReader(stream)
                 require(input.u32() == MAGIC.toLong()) { "Not a Godot pack: missing GDPC header." }
@@ -244,7 +253,124 @@ class PckPack private constructor(
                     entries += Entry(path, fileBase + relativeOffset, size, md5, entryFlags)
                 }
 
-                return PckPack(file, version, major, minor, patch, entries)
+                val pack = PckPack(file, version, major, minor, patch, entries)
+                cache.save(pack)
+                return pack
+            }
+        }
+
+        /**
+         * Sidecar cache for PCK index metadata. Stores entry offsets, sizes and MD5s next to the
+         * pack file so re-opening a multi-thousand-resource pack does not re-parse its index.
+         *
+         * The cache is invalidated whenever the pack's size or last-modified time changes, which
+         * covers re-installation and patching. A corrupt or unreadable cache simply falls back to
+         * parsing the index and rewrites the cache.
+         */
+        private class PckPackCache private constructor(private val metaFile: File) {
+
+            companion object {
+                private const val CACHE_VERSION = 1
+                private const val CACHE_MAGIC = 0x50434B4D // "PCKM"
+                private val lock = Any()
+
+                fun forFile(pack: File): PckPackCache =
+                    PckPackCache(File(pack.absolutePath + ".meta"))
+            }
+
+            data class EntryData(
+                val path: String,
+                val offset: Long,
+                val size: Long,
+                val md5: ByteArray,
+                val flags: Int,
+            )
+
+            data class CacheData(
+                val fileSize: Long,
+                val lastModified: Long,
+                val version: Int,
+                val major: Int,
+                val minor: Int,
+                val patch: Int,
+                val flags: Int,
+                val entries: List<EntryData>,
+            )
+
+            fun load(): CacheData? = synchronized(lock) {
+                if (!metaFile.isFile) return@synchronized null
+                runCatching {
+                    FileInputStream(metaFile).use { stream ->
+                        val input = LeReader(stream)
+                        if (input.u32().toInt() != CACHE_MAGIC) return@runCatching null
+                        if (input.u32().toInt() != CACHE_VERSION) return@runCatching null
+                        val fileSize = input.u64()
+                        val lastModified = input.u64()
+                        val version = input.u32().toInt()
+                        val major = input.u32().toInt()
+                        val minor = input.u32().toInt()
+                        val patch = input.u32().toInt()
+                        val flags = input.u32().toInt()
+                        repeat(16) { input.u32() }
+                        val count = input.u32().toInt()
+                        if (count < 0 || count > MAX_ENTRIES) return@runCatching null
+                        val entries = ArrayList<EntryData>(count)
+                        repeat(count) {
+                            val pathLength = input.u32().toInt()
+                            if (pathLength < 1 || pathLength > MAX_PATH_LENGTH) return@runCatching null
+                            val path = String(input.bytes(pathLength), Charsets.UTF_8).trimEnd('\u0000')
+                            val offset = input.u64()
+                            val size = input.u64()
+                            val md5 = input.bytes(16)
+                            val entryFlags = input.u32().toInt()
+                            entries += EntryData(path, offset, size, md5, entryFlags)
+                        }
+                        CacheData(fileSize, lastModified, version, major, minor, patch, flags, entries)
+                    }
+                }.getOrNull()
+            }
+
+            fun save(pack: PckPack) = synchronized(lock) {
+                runCatching {
+                    FileOutputStream(metaFile).use { output ->
+                        val buffer = ByteBuffer.allocate(256).order(ByteOrder.LITTLE_ENDIAN)
+                        buffer.putInt(CACHE_MAGIC)
+                        buffer.putInt(CACHE_VERSION)
+                        buffer.putLong(pack.file.length())
+                        buffer.putLong(pack.file.lastModified())
+                        buffer.putInt(pack.packVersion)
+                        buffer.putInt(pack.engineMajor)
+                        buffer.putInt(pack.engineMinor)
+                        buffer.putInt(pack.enginePatch)
+                        buffer.putInt(0) // flags
+                        buffer.putLong(0) // fileBase placeholder
+                        repeat(16) { buffer.putInt(0) }
+                        buffer.putInt(pack.entries.size)
+                        buffer.flip()
+                        writeFullyToChannel(output.channel, buffer)
+
+                        for (entry in pack.entries) {
+                            val pathBytes = entry.path.toByteArray(Charsets.UTF_8)
+                            val padded = paddedPathLength(entry.path)
+                            val entryBuffer = ByteBuffer.allocate(4 + padded.toInt() + 8 + 8 + 16 + 4).order(ByteOrder.LITTLE_ENDIAN)
+                            entryBuffer.putInt(padded.toInt())
+                            entryBuffer.put(pathBytes)
+                            repeat((padded - pathBytes.size).toInt()) { entryBuffer.put(0) }
+                            entryBuffer.putLong(entry.offset)
+                            entryBuffer.putLong(entry.size)
+                            entryBuffer.put(entry.md5)
+                            entryBuffer.putInt(entry.flags)
+                            entryBuffer.flip()
+                            writeFullyToChannel(output.channel, entryBuffer)
+                        }
+                    }
+                }
+            }
+
+            private fun writeFullyToChannel(channel: FileChannel, buffer: ByteBuffer) {
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer)
+                }
             }
         }
 

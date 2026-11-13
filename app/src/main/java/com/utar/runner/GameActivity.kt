@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.ResultReceiver
+import android.os.SystemClock
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
@@ -57,15 +58,21 @@ class GameActivity : FullScreenGodotApp() {
     private var overlayOpacity by mutableStateOf(0.42f)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        SessionLog.mark("GameActivity.onCreate: start")
         SessionLog.mark("GameActivity.onCreate: Godot setup begins (UI thread blocks until the pack is indexed)")
+        val setupStart = SystemClock.elapsedRealtime()
         super.onCreate(savedInstanceState)
-        SessionLog.mark("GameActivity.onCreate: Godot setup returned")
+        val setupMs = SystemClock.elapsedRealtime() - setupStart
+        SessionLog.mark("GameActivity.onCreate: Godot setup returned (pack indexed) in ${setupMs}ms")
         SessionLog.recordProcessId()
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         ImmersiveMode.apply(this)
 
+        SessionLog.mark("GameActivity.onCreate: installing Compose overlay")
         installOverlay()
+        SessionLog.mark("GameActivity.onCreate: Compose overlay installed")
+
         signalLauncherOnFirstFrame()
     }
 
@@ -178,22 +185,30 @@ class GameActivity : FullScreenGodotApp() {
         if (hasFocus) ImmersiveMode.apply(this)
     }
 
+    /** Consume the back button so the game is not backgrounded / finished when the user taps it. */
+    override fun onBackPressed() {
+        SessionLog.mark("GameActivity: back button pressed — ignored (game kept alive)")
+    }
+
     override fun onGodotSetupCompleted() {
         super.onGodotSetupCompleted()
-        SessionLog.mark("Godot setup completed")
+        SessionLog.mark("Godot setup completed (scene tree initialized)")
         setLoading(true, "Loading game data…")
     }
 
     /** Called on Godot's render thread, so it must only touch the UI through [setLoading]. */
     override fun onGodotMainLoopStarted() {
         super.onGodotMainLoopStarted()
-        SessionLog.mark("Godot main loop started")
+        SessionLog.mark("Godot main loop started (first game frame imminent)")
         signalLauncherReady()
+        SessionLog.mark("GameActivity: hiding loading overlay — game content visible")
         setLoading(false, "")
+        SessionLog.mark("GameActivity: loading overlay hidden — game ready for input")
     }
 
     override fun onDestroy() {
-        SessionLog.mark("GameActivity destroyed")
+        val destroyMs = SystemClock.elapsedRealtime()
+        SessionLog.mark("GameActivity destroyed at +${destroyMs}ms")
         super.onDestroy()
     }
 

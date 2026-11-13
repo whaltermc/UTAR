@@ -129,11 +129,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             val context: Context = getApplication()
             SessionLog.mark("Launch requested (${backend.label})")
 
+            SessionLog.mark("Launcher: renderer alignment begins")
             val aligned = withContext(Dispatchers.IO) {
                 runCatching { ProjectSettingsOverride.prepare(context, pack, backend) }
                     .onFailure { SessionLog.e("Renderer override failed", it) }
                     .getOrDefault(false)
             }
+            SessionLog.mark("Launcher: renderer alignment finished (aligned=$aligned)")
             if (!aligned) {
                 _state.update {
                     it.copy(
@@ -152,7 +154,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             try {
+                SessionLog.mark("Launcher: starting GameActivity")
                 context.startActivity(GameActivity.createIntent(context, pack, backend, receiver))
+                SessionLog.mark("Launcher: GameActivity startActivity returned")
             } catch (error: Throwable) {
                 SessionLog.e("Couldn't start the game activity", error)
                 _state.update { it.copy(launching = false, stage = "", error = error.message ?: "Couldn't start the game.") }
@@ -180,16 +184,22 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun awaitGameWindow(context: Context, ready: CompletableDeferred<Unit>): LaunchOutcome {
         val processName = "${context.packageName}:godot"
         val deadline = SystemClock.elapsedRealtime() + LAUNCH_TIMEOUT_MS
+        val waitStarted = SystemClock.elapsedRealtime()
         var seenAlive = false
         while (SystemClock.elapsedRealtime() < deadline) {
-            if (withTimeoutOrNull(POLL_MS) { ready.await() } != null) return LaunchOutcome.READY
+            if (withTimeoutOrNull(POLL_MS) { ready.await() } != null) {
+                SessionLog.mark("Launcher: game window ready (waited ${SystemClock.elapsedRealtime() - waitStarted}ms)")
+                return LaunchOutcome.READY
+            }
             val alive = withContext(Dispatchers.IO) { isProcessAlive(context, processName) }
             if (alive) {
                 seenAlive = true
             } else if (seenAlive) {
+                SessionLog.mark("Launcher: game process crashed after ${SystemClock.elapsedRealtime() - waitStarted}ms")
                 return LaunchOutcome.CRASHED
             }
         }
+        SessionLog.mark("Launcher: game window timeout after ${SystemClock.elapsedRealtime() - waitStarted}ms")
         return LaunchOutcome.TIMED_OUT
     }
 
