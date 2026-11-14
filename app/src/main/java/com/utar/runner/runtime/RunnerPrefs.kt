@@ -50,6 +50,12 @@ class RunnerPrefs(context: Context) {
             prefs.edit().putInt(KEY_ACCENT_COLOR, value).apply()
         }
 
+    var dlcOverride: Boolean
+        get() = prefs.getBoolean(KEY_DLC_OVERRIDE, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_DLC_OVERRIDE, value).apply()
+        }
+
     fun recordInstall(record: InstallRecord) {
         prefs.edit()
             .putString(KEY_INSTALL_NAME, record.fileName)
@@ -169,6 +175,7 @@ class RunnerPrefs(context: Context) {
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_USE_DYNAMIC_COLOR = "use_dynamic_color"
         const val KEY_ACCENT_COLOR = "accent_color"
+        const val KEY_DLC_OVERRIDE = "dlc_override"
         const val DEFAULT_ACCENT_COLOR = 0xFFE9C7A3.toInt()
     }
 }

@@ -22,7 +22,7 @@ cd "$ROOT"
 ABIS="${ABIS:-arm64-v8a}"
 GODOT_CPP_BRANCH="${GODOT_CPP_BRANCH:-4.1}"
 GODOT_CPP_DIR="$ROOT/natives/godot-cpp"
-NDK_VERSION="23.2.8568313"
+NDK_VERSION="29.0.14206865"
 FMOD_DIR="$ROOT/runtime/fmodstudioapi20214android/api"
 if [ -z "${JOBS:-}" ]; then
     cpus="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"

@@ -6,8 +6,10 @@ import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
-/** Assembles the runner log, engine logcat output and the game's own log file into one report. */
+/** Assembles runner logs, engine output and pack patch logs into a zip archive. */
 object LogExport {
 
     private const val MAX_SECTION_CHARS = 200_000
@@ -18,13 +20,30 @@ object LogExport {
         packFile: File?,
         backend: Backend,
     ): Long = withContext(Dispatchers.IO) {
-        val report = buildReport(context, packFile, backend)
-        val bytes = report.toByteArray(Charsets.UTF_8)
-        context.contentResolver.openOutputStream(target, "wt")?.use { output ->
-            output.write(bytes)
+        var total = 0L
+        context.contentResolver.openOutputStream(target, "wt")?.use { raw ->
+            val zip = ZipOutputStream(raw)
+            fun add(name: String, text: String) {
+                if (text.isBlank()) return
+                val entry = ZipEntry(name)
+                zip.putNextEntry(entry)
+                val bytes = text.toByteArray(Charsets.UTF_8)
+                zip.write(bytes)
+                zip.closeEntry()
+                total += bytes.size
+            }
+            add("report.txt", buildReport(context, packFile, backend))
+            add("session.log", SessionLog.contents())
+            add("pck-patch.log", PckPatchLog.contents(context))
+            add("godot-logcat.txt", capturedLogcat(context).orEmpty())
+            add("logcat-ring.txt", logcat())
+            add("crash-logcat.txt", crashLogcat())
+            add("godot.log", godotLog(context).orEmpty())
+            add("scripts-dump.txt", scriptDump(context).orEmpty())
+            zip.close()
         } ?: throw IllegalStateException("Couldn't open the selected destination.")
-        SessionLog.i("Log exported to $target (${bytes.size} bytes)")
-        bytes.size.toLong()
+        SessionLog.i("Log exported to $target ($total bytes)")
+        total
     }
 
     fun buildReport(context: Context, packFile: File?, backend: Backend): String = buildString {
@@ -40,27 +59,8 @@ object LogExport {
                 else -> "not installed"
             },
         )
-        appendLine()
-        appendLine("=== Runner session log ===")
-        appendLine(SessionLog.contents().ifBlank { "(empty)" })
-        appendLine()
-        appendLine("=== Engine output (captured during the session) ===")
-        appendLine(capturedLogcat(context) ?: "(no captured engine output)")
-        appendLine()
-        appendLine("=== Engine output (logcat ring buffer, launcher + game process) ===")
-        appendLine(logcat().ifBlank { "(no engine output captured)" })
-        appendLine()
-        appendLine("=== Android crash log (logcat -b crash) ===")
-        appendLine(crashLogcat().ifBlank { "(no crash logcat captured)" })
-        appendLine()
-        appendLine("=== Game log (user://logs/godot.log) ===")
-        appendLine(godotLog(context) ?: "(no Godot log file found)")
-        appendLine()
-        appendLine("=== Game scripts (from the staged pack, captured at install) ===")
-        appendLine(scriptDump(context) ?: "(no script dump found)")
     }
 
-    /** Scripts the installer extracted from the pack, for diagnosing in-game behaviour. */
     private fun scriptDump(context: Context): String? =
         File(context.filesDir, "logs/scripts-dump.txt")
             .takeIf { it.isFile }

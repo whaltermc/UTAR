@@ -64,6 +64,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -148,7 +149,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 val pagePadding = if (twoPane) 20.dp else 16.dp
 
                 val install = { importLauncher.launch(arrayOf("*/*")) }
-                val exportLog = { exportLauncher.launch("utar-log-${System.currentTimeMillis()}.txt") }
+                val exportLog = { exportLauncher.launch("utar-log-${System.currentTimeMillis()}.zip") }
                 val backupSaves = { backupSavesLauncher.launch("utar-saves-${System.currentTimeMillis()}.zip") }
                 val restoreSaves = { restoreSavesLauncher.launch(arrayOf("*/*")) }
                 val launch: () -> Unit = { state.packFile?.let(viewModel::launchGame) }
@@ -196,6 +197,8 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                                 AppearanceCard(
                                     expanded = showAppearance,
                                     onToggle = { showAppearance = !showAppearance },
+                                    dlcOverrideEnabled = viewModel.prefsDlcOverride,
+                                    onDlcOverrideChanged = { viewModel.toggleDlcOverride(it) },
                                 )
                             }
                         }
@@ -227,6 +230,8 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             AppearanceCard(
                                 expanded = showAppearance,
                                 onToggle = { showAppearance = !showAppearance },
+                                dlcOverrideEnabled = viewModel.prefsDlcOverride,
+                                onDlcOverrideChanged = { viewModel.toggleDlcOverride(it) },
                             )
                         }
                     }
@@ -618,6 +623,8 @@ private fun BackendOption(
 private fun AppearanceCard(
     expanded: Boolean,
     onToggle: () -> Unit,
+    dlcOverrideEnabled: Boolean,
+    onDlcOverrideChanged: (Boolean) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     val chevron by animateFloatAsState(
@@ -673,15 +680,39 @@ private fun AppearanceCard(
                 visible = expanded,
                 enter = expandVertically(spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessLow)) + fadeIn(),
                 exit = shrinkVertically(spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessLow)) + fadeOut(),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
-                    ThemeSettings(onClose = onToggle)
-                }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        ThemeSettings(onClose = onToggle)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Switch(
+                                checked = dlcOverrideEnabled,
+                                onCheckedChange = onDlcOverrideChanged,
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    "Force DLC unlock",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    "Enable if the pack ships DLC but it isn't detected.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                    }
             }
         }
     }

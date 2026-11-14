@@ -16,6 +16,7 @@ import com.utar.runner.core.GameInstaller
 import com.utar.runner.core.PackWarmup
 import com.utar.runner.core.ProjectSettingsOverride
 import com.utar.runner.core.SaveBackup
+import com.utar.runner.core.ShaderPatcher
 import com.utar.runner.runtime.Backend
 import com.utar.runner.runtime.DebugLog
 import com.utar.runner.runtime.LogExport
@@ -35,7 +36,7 @@ import java.io.File
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     data class UiState(
-        val backend: Backend = Backend.AUTO,
+        val backend: Backend = Backend.FORWARD_PLUS,
         val packFile: File? = null,
         val packName: String = "",
         val packBytes: Long = 0L,
@@ -55,6 +56,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val saveBackup = SaveBackup(application)
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    val prefsDlcOverride: Boolean
+        get() = prefs.dlcOverride
 
     init {
         // The Compose screen composes straight away; only this tiny scan waits. No pack
@@ -77,6 +81,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun selectBackend(backend: Backend) {
         prefs.backend = backend
         _state.update { it.copy(backend = backend) }
+    }
+
+    fun toggleDlcOverride(enabled: Boolean) {
+        prefs.dlcOverride = enabled
+        _state.update { it.copy(notice = if (enabled) "DLC override enabled — will apply on next install." else "DLC override disabled.")}
     }
 
     fun dismissMessages() {
@@ -182,7 +191,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
      * activity is started. The launcher keeps animating its own "starting" screen until the
      * game process reports that its window has painted, or dies.
      */
-    fun launchGame(pack: File) {
+    @Suppress("UNUSED_PARAMETER")
+    fun launchGame(_pack: File) {
         val current = _state.value
         if (current.busy || current.launching) return
         val backend = current.backend
@@ -210,6 +220,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             DebugLog.timing("Renderer alignment: begins")
+            // Publish the backend marker for the native shader patch loader before the
+            // engine starts; the GLES3 pipeline only mounts patches when it says so.
+            withContext(Dispatchers.IO) { ShaderPatcher.prepare(context, backend) }
             val aligned = withContext(Dispatchers.IO) {
                 runCatching { ProjectSettingsOverride.prepare(context, staged, backend) }
                     .onFailure { SessionLog.e("Renderer override failed", it) }

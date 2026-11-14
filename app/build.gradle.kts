@@ -19,6 +19,14 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
+
+        // libutarcore — the runner's native core (PCK I/O, library scanning, patchers).
+        // Static libc++ keeps it free of the libc++_shared.so packaging pitfall.
+        externalNativeBuild {
+            cmake {
+                arguments += "-DANDROID_STL=c++_static"
+            }
+        }
     }
 
     buildFeatures {
@@ -51,6 +59,22 @@ android {
 
     sourceSets["main"].jniLibs.srcDir(rootProject.file("natives/android"))
     sourceSets["main"].assets.srcDir(rootProject.file("natives/utap_shims"))
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    // Same NDK toolchain the natives/ gdextensions build with.
+    ndkVersion = "29.0.14206865"
+}
+
+// Unit tests exercise the native core directly (libutarcore is bionic aarch64 and this
+// project runs on an aarch64 device), so put its test-resource copy on java.library.path.
+tasks.withType<Test>().configureEach {
+    systemProperty("java.library.path", file("src/test/resources").absolutePath)
 }
 
 // Always use the official Godot 4.1.4 export template from Maven. A locally built
