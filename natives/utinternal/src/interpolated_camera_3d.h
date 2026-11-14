@@ -16,7 +16,12 @@ public:
 	// Godot 3.5 InterpolatedCamera::InterpolatedCameraProcessMode.
 	// Both spellings are bound so scripts written against the engine fork
 	// (short form) and against stock 3.5 (long form) resolve.
-	enum ProcessMode {
+	//
+	// NOTE: this must NOT be called ProcessMode / bound as "process_mode":
+	// Node already owns a `process_mode` property (Inherit/Pausable/Always/...),
+	// and shadowing it makes scene files that set Node.process_mode write into
+	// the interpolation mode instead, leaving the real node mode at Inherit.
+	enum InterpolationProcessMode {
 		PROCESS_PHYSICS = 0,
 		PROCESS_IDLE = 1,
 		INTERPOLATED_CAMERA_PROCESS_PHYSICS = 0,
@@ -27,7 +32,8 @@ private:
 	NodePath target;
 	real_t speed = 1.0;
 	bool enabled = false;
-	ProcessMode process_mode = PROCESS_IDLE;
+	bool warned_missing_target = false;
+	InterpolationProcessMode interpolation_mode = PROCESS_IDLE;
 
 protected:
 	static void _bind_methods();
@@ -47,8 +53,8 @@ public:
 	void set_interpolation_enabled(bool p_enable);
 	bool is_interpolation_enabled() const;
 
-	void set_process_mode(ProcessMode p_mode);
-	ProcessMode get_process_mode() const;
+	void set_interpolation_process_mode(InterpolationProcessMode p_mode);
+	InterpolationProcessMode get_interpolation_process_mode() const;
 
 	void _update_process_mode();
 
@@ -57,6 +63,6 @@ public:
 
 } // namespace godot
 
-VARIANT_ENUM_CAST(godot::InterpolatedCamera3D::ProcessMode);
+VARIANT_ENUM_CAST(godot::InterpolatedCamera3D::InterpolationProcessMode);
 
 #endif // INTERPOLATED_CAMERA_3D_H

@@ -217,6 +217,36 @@ class GameInstaller(private val context: Context) {
                 "in ${SystemClock.elapsedRealtime() - scriptScanStarted}ms",
         )
 
+        // Font diagnostics (log only, nothing is replaced): silent font failures show up in
+        // game as invisible text and empty emoji glyphs without a single engine error. Verify
+        // each font entry against the pack's own MD5 (proves the staged rewrite is innocent)
+        // and sniff the header magic so a broken entry names itself in the exported log.
+        val fontScanStarted = SystemClock.elapsedRealtime()
+        var fontCount = 0
+        var fontBadCount = 0
+        for (entry in pack.entries) {
+            val extension = entry.path.substringAfterLast('.', "").lowercase()
+            if (extension !in FONT_EXTENSIONS) continue
+            if (entry.isEncrypted || entry.size <= 0L) {
+                SessionLog.w("Font ${entry.path}: unreadable (encrypted or ${entry.size} bytes)")
+                fontBadCount++
+                continue
+            }
+            val data = pack.readBytes(entry)
+            val integrityOk = md5(data).contentEquals(entry.md5)
+            val format = fontFormat(data)
+            fontCount++
+            if (!integrityOk) fontBadCount++
+            SessionLog.i(
+                "Font ${entry.path}: ${data.size}B format=$format flags=${entry.flags} " +
+                    "integrity=${if (integrityOk) "ok" else "MISMATCH"}",
+            )
+        }
+        SessionLog.mark(
+            "Install: font diagnostics: $fontCount font(s), $fontBadCount flagged " +
+                "in ${SystemClock.elapsedRealtime() - fontScanStarted}ms",
+        )
+
         val steamEntry = pack.entries.firstOrNull { it.path == STEAM_PLATFORM_SCRIPT }
         if (steamEntry != null && !steamEntry.isEncrypted && steamEntry.size <= MAX_CONFIG_BYTES) {
             val original = String(pack.readBytes(steamEntry), Charsets.UTF_8)
@@ -329,6 +359,27 @@ class GameInstaller(private val context: Context) {
 
         private const val STORE_SCRIPT = "res://Store.gd"
         private const val SCENE_VIEW_SCRIPT = "res://ui/components/Game/SceneView/SceneView.gd"
+
+        private val FONT_EXTENSIONS = setOf("ttf", "otf", "ttc", "otc", "woff", "woff2", "fnt", "fontdata")
+
+        private fun fontFormat(data: ByteArray): String? {
+            if (data.size < 4) return "empty"
+            val magic = ((data[0].toInt() and 0xFF) shl 24) or ((data[1].toInt() and 0xFF) shl 16) or
+                ((data[2].toInt() and 0xFF) shl 8) or (data[3].toInt() and 0xFF)
+            return when (magic) {
+                0x00010000 -> "truetype"
+                0x4F54544F -> "opentype"
+                0x74746366 -> "ttc"
+                0x774F4646 -> "woff"
+                0x774F4632 -> "woff2"
+                0x52535243 -> "godot-resource" // .fontdata (RSRC)
+                0x52534343 -> "godot-resource-compressed" // .fontdata (RSCC)
+                else -> "unknown"
+            }
+        }
+
+        private fun md5(data: ByteArray): ByteArray =
+            java.security.MessageDigest.getInstance("MD5").digest(data)
         private const val STEAM_PLATFORM_SCRIPT = "res://components/DistPlatform/SteamPlatform.gd"
         private const val STEAM_PLATFORM_STUB = """
 extends "DistPlatform.gd"
