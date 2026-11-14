@@ -217,6 +217,48 @@ class GameInstaller(private val context: Context) {
                 "in ${SystemClock.elapsedRealtime() - scriptScanStarted}ms",
         )
 
+        // Script dump (ground truth for on-device diagnosis): an index of every script and
+        // scene the pack carries plus the full source of chat/scene scripts, written to
+        // logs/scripts-dump.txt and included by LogExport. Chat-related sources are placed
+        // last because LogExport keeps only the tail of large sections.
+        runCatching {
+            val dumpDir = File(context.filesDir, "logs")
+            if (!dumpDir.exists()) dumpDir.mkdirs()
+            val dumpFile = File(dumpDir, "scripts-dump.txt")
+            val dump = StringBuilder()
+            val scripts = pack.entries.filter { it.path.endsWith(".gd", true) && !it.isEncrypted && it.size in 1..MAX_CONFIG_BYTES }
+            dump.appendLine("=== Script index (${scripts.size} scripts) ===")
+            for (entry in scripts.sortedBy { it.path }) dump.appendLine("${entry.path} (${entry.size}B)")
+            val scenes = pack.entries.filter { it.path.endsWith(".tscn", true) }
+            dump.appendLine()
+            dump.appendLine("=== Scene index (${scenes.size} scenes) ===")
+            for (entry in scenes.sortedBy { it.path }) dump.appendLine("${entry.path} (${entry.size}B)")
+            dump.appendLine()
+            dump.appendLine("=== Sources ===")
+            var sourceCount = 0
+            for (entry in scripts.sortedBy { it.path }) {
+                val path = entry.path
+                val interesting = path.contains("chat", true) || path.contains("messenger", true) ||
+                    path.contains("dialog", true) || path.contains("SceneView") ||
+                    path.contains("ScreenNavigator") || path.endsWith("/Game.gd", true)
+                if (!interesting) continue
+                val source = runCatching { String(pack.readBytes(entry), Charsets.UTF_8) }.getOrNull() ?: continue
+                dump.appendLine("---- $path ----")
+                if (source.length > MAX_SCRIPT_DUMP_CHARS) {
+                    dump.appendLine(source.takeLast(MAX_SCRIPT_DUMP_CHARS))
+                    dump.appendLine("[... ${source.length - MAX_SCRIPT_DUMP_CHARS} earlier chars truncated ...]")
+                } else {
+                    dump.appendLine(source)
+                }
+                dump.appendLine()
+                sourceCount++
+            }
+            dumpFile.writeText(dump.toString())
+            SessionLog.mark("Install: script dump written ($sourceCount sources, ${dump.length} chars)")
+        }.onFailure {
+            SessionLog.w("Script dump failed: ${it.message}")
+        }
+
         // Font diagnostics (log only, nothing is replaced): silent font failures show up in
         // game as invisible text and empty emoji glyphs without a single engine error. Verify
         // each font entry against the pack's own MD5 (proves the staged rewrite is innocent)
@@ -373,6 +415,7 @@ class GameInstaller(private val context: Context) {
 
         private val FONT_EXTENSIONS = setOf("ttf", "otf", "ttc", "otc", "woff", "woff2", "fnt", "fontdata")
         private const val MAX_FONT_READ_BYTES = 64L * 1024 * 1024
+        private const val MAX_SCRIPT_DUMP_CHARS = 80_000
 
         private fun fontFormat(data: ByteArray): String? {
             if (data.size < 4) return "empty"
