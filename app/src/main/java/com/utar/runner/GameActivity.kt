@@ -21,6 +21,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.content.IntentCompat
 import com.utar.runner.runtime.Backend
+import com.utar.runner.runtime.DebugLog
+import com.utar.runner.runtime.GameLogCapture
+import com.utar.runner.runtime.MainThreadWatchdog
 import com.utar.runner.runtime.SessionLog
 import com.utar.runner.ui.LoadingOverlay
 import com.utar.runner.ui.TouchControlsOverlay
@@ -51,6 +54,7 @@ class GameActivity : FullScreenGodotApp() {
 
     @Volatile private var readySignaled = false
 
+    private var createdAt = 0L
     private var showLoading by mutableStateOf(true)
     private var loadingMessage by mutableStateOf("Preparing the engine…")
     private var touchControlsEnabled by mutableStateOf(true)
@@ -58,13 +62,27 @@ class GameActivity : FullScreenGodotApp() {
     private var overlayOpacity by mutableStateOf(0.42f)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        createdAt = SystemClock.elapsedRealtime()
+        DebugLog.timing("Godot activity start: GameActivity.onCreate")
         SessionLog.mark("GameActivity.onCreate: start")
+        // FMOD's Android runtime needs its Java bridge (org.fmod.FMOD.init) before any
+        // native FMOD call; the engine loads the FMOD extension during super.onCreate.
+        // Mirrors UTAP's FmodPlugin (System.loadLibrary + org.fmod.FMOD.init).
+        System.loadLibrary("fmod")
+        System.loadLibrary("fmodstudio")
+        org.fmod.FMOD.init(this)
+        SessionLog.mark("GameActivity.onCreate: FMOD java bridge initialized")
         SessionLog.mark("GameActivity.onCreate: Godot setup begins (UI thread blocks until the pack is indexed)")
         val setupStart = SystemClock.elapsedRealtime()
         super.onCreate(savedInstanceState)
         val setupMs = SystemClock.elapsedRealtime() - setupStart
+        DebugLog.timing("Godot activity start: Godot setup (pack indexed) took ${setupMs}ms")
         SessionLog.mark("GameActivity.onCreate: Godot setup returned (pack indexed) in ${setupMs}ms")
         SessionLog.recordProcessId()
+        // Keep the whole session's engine output on disk; the logcat ring buffer alone
+        // loses boot-time errors once error spam floods it.
+        GameLogCapture.start(filesDir, android.os.Process.myPid())
+        MainThreadWatchdog.start(filesDir)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         ImmersiveMode.apply(this)
@@ -126,6 +144,7 @@ class GameActivity : FullScreenGodotApp() {
             override fun onDraw() {
                 if (fired) return
                 fired = true
+                DebugLog.timing("First frame: drawn ${SystemClock.elapsedRealtime() - createdAt}ms after onCreate")
                 SessionLog.mark("GameActivity first frame drawn")
                 signalLauncherReady()
                 val self = this
@@ -210,6 +229,10 @@ class GameActivity : FullScreenGodotApp() {
         val destroyMs = SystemClock.elapsedRealtime()
         SessionLog.mark("GameActivity destroyed at +${destroyMs}ms")
         super.onDestroy()
+        // Release the FMOD java bridge like UTAP's FmodPlugin.onMainDestroy.
+        org.fmod.FMOD.close()
+        MainThreadWatchdog.stop()
+        GameLogCapture.stop()
     }
 
     override fun getCommandLine(): List<String> {

@@ -3,8 +3,11 @@
 # Builds the whole runner in one pass:
 #   1. locates the Android SDK/NDK and extracts the FMOD Studio SDK
 #   2. fetches godot-cpp 4.1 and patches its Android host detection for Termux
-#   3. builds every GDExtension for the requested ABIs
-#   4. assembles the debug APK
+#   3. builds every GDExtension for the requested ABIs (fmod extension compiles
+#      the vendored natives/fmod-for-godot sources with UTAP's patch applied)
+#   4. assembles the debug APK (engine is the official Godot 4.1.4 template
+#      pulled from Maven; a locally built engine AAR is never used — its font
+#      loading is broken)
 #
 # Usage:
 #   ./build.sh                          # arm64-v8a, debug APK
@@ -80,6 +83,14 @@ for abi in $ABIS; do
         cp -f "$lib" "$ROOT/natives/android/$abi/"
     done
 done
+
+# --- Engine AAR guard -------------------------------------------------------
+# The runner must ship the official 4.1.4 template (fonts broke on the custom
+# engine). app/build.gradle.kts always pulls it from Maven; fail early here if a
+# stale local AAR is still around so nobody quietly rebuilds the old behaviour.
+if ls "$ROOT"/app/libs/godot-lib*.aar >/dev/null 2>&1; then
+    die "Stale engine AAR in app/libs — the build now uses the official 4.1.4 template from Maven. Delete app/libs/godot-lib*.aar."
+fi
 
 # --- godot-cpp -------------------------------------------------------------
 

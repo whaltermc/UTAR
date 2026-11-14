@@ -2,6 +2,7 @@
 #define STUDIO_EVENT_EMITTER_H
 
 #include "fmod_assets.h"
+#include "fmod_studio_editor_module.h"
 #include "scene/studio_listener.h"
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/scene_tree_timer.hpp>
@@ -19,6 +20,8 @@ struct StudioEventEmitterImpl
 	bool is_active{};
 	bool preload_samples{};
 	bool allow_fadeout = true;
+	float volume = 1.0f;
+	bool paused = false;
 	bool trigger_once{};
 	Object* rigidbody = nullptr;
 	Dictionary overridden_parameters;
@@ -101,6 +104,13 @@ public:
 
 	void set_overridden_parameters(const Dictionary& overridden_parameters);
 	Dictionary get_overridden_parameters() const;
+
+	void set_volume(float volume);
+	float get_volume() const;
+	void set_paused(bool paused);
+	bool is_paused() const;
+	void set_playing(bool playing);
+	bool is_playing();
 };
 
 class StudioEventEmitter3D : public Node3D
@@ -155,6 +165,13 @@ public:
 
 	void set_overridden_parameters(const Dictionary& overridden_parameters);
 	Dictionary get_overridden_parameters() const;
+
+	void set_volume(float volume);
+	float get_volume() const;
+	void set_paused(bool paused);
+	bool is_paused() const;
+	void set_playing(bool playing);
+	bool is_playing();
 };
 
 #endif // STUDIO_EVENT_EMITTER_H

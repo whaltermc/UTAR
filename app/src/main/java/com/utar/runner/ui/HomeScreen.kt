@@ -47,7 +47,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
@@ -106,6 +108,16 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     ) { uri: Uri? ->
         if (uri != null) viewModel.exportLog(uri)
     }
+    val backupSavesLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri: Uri? ->
+        if (uri != null) viewModel.backupSaves(uri)
+    }
+    val restoreSavesLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri != null) viewModel.restoreSaves(uri)
+    }
 
     LaunchedEffect(state.error, state.notice) {
         val message = state.error ?: state.notice
@@ -137,6 +149,8 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
                 val install = { importLauncher.launch(arrayOf("*/*")) }
                 val exportLog = { exportLauncher.launch("utar-log-${System.currentTimeMillis()}.txt") }
+                val backupSaves = { backupSavesLauncher.launch("utar-saves-${System.currentTimeMillis()}.zip") }
+                val restoreSaves = { restoreSavesLauncher.launch(arrayOf("*/*")) }
                 val launch: () -> Unit = { state.packFile?.let(viewModel::launchGame) }
 
                 if (twoPane) {
@@ -167,7 +181,13 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Reveal(index = 1) {
-                                PackageCard(state, onInstall = install, onExportLog = exportLog)
+                                PackageCard(
+                                    state,
+                                    onInstall = install,
+                                    onExportLog = exportLog,
+                                    onBackupSaves = backupSaves,
+                                    onRestoreSaves = restoreSaves,
+                                )
                             }
                             Reveal(index = 2) {
                                 GraphicsCard(state, onSelectBackend = viewModel::selectBackend)
@@ -192,7 +212,13 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             HeroPanel(state = state, onLaunch = launch, fillHeight = false, modifier = Modifier.fillMaxWidth())
                         }
                         Reveal(index = 1) {
-                            PackageCard(state, onInstall = install, onExportLog = exportLog)
+                            PackageCard(
+                                state,
+                                onInstall = install,
+                                onExportLog = exportLog,
+                                onBackupSaves = backupSaves,
+                                onRestoreSaves = restoreSaves,
+                            )
                         }
                         Reveal(index = 2) {
                             GraphicsCard(state, onSelectBackend = viewModel::selectBackend)
@@ -208,7 +234,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             }
         }
 
-        LaunchOverlay(visible = state.launching)
+        LaunchOverlay(visible = state.launching, stage = state.stage)
     }
 }
 
@@ -221,7 +247,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
  * phase, so this screen lives in the launcher process, where it keeps animating the entire time.
  */
 @Composable
-private fun LaunchOverlay(visible: Boolean) {
+private fun LaunchOverlay(visible: Boolean, stage: String) {
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(tween(180)),
@@ -257,8 +283,13 @@ private fun LaunchOverlay(visible: Boolean) {
                     color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center,
                 )
+                val detail = if (stage.isNotBlank() && stage != "Launching") {
+                    "$stage · " + String.format(Locale.US, "%d:%02d", elapsed / 60, elapsed % 60)
+                } else {
+                    "Indexing game data · " + String.format(Locale.US, "%d:%02d", elapsed / 60, elapsed % 60)
+                }
                 Text(
-                    text = "Indexing game data · " + String.format(Locale.US, "%d:%02d", elapsed / 60, elapsed % 60),
+                    text = detail,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -367,7 +398,7 @@ private fun HeroPanel(
 
             ExpressiveButton(
                 onClick = onLaunch,
-                enabled = installed && !state.busy && !state.launching,
+                enabled = installed && state.ready && !state.busy && !state.launching,
                 container = scheme.primary,
                 content = scheme.onPrimary,
                 height = 64.dp,
@@ -386,12 +417,14 @@ private fun StatusChip(state: HomeViewModel.UiState, installed: Boolean) {
     val scheme = MaterialTheme.colorScheme
     val (container, content) = when {
         state.launching || state.busy -> scheme.tertiaryContainer to scheme.onTertiaryContainer
+        !state.ready -> scheme.surfaceContainerHighest to scheme.onSurfaceVariant
         installed -> scheme.secondaryContainer to scheme.onSecondaryContainer
         else -> scheme.surfaceContainerHighest to scheme.onSurfaceVariant
     }
     val label = when {
         state.launching -> "Starting the engine"
         state.busy -> "Installing package"
+        !state.ready -> "Checking installed game"
         installed -> "Ready to play"
         else -> "No game package"
     }
@@ -422,6 +455,8 @@ private fun PackageCard(
     state: HomeViewModel.UiState,
     onInstall: () -> Unit,
     onExportLog: () -> Unit,
+    onBackupSaves: () -> Unit,
+    onRestoreSaves: () -> Unit,
 ) {
     val installed = state.packFile != null
     ExpressiveCard {
@@ -465,6 +500,36 @@ private fun PackageCard(
                 Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Export log", style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ExpressiveButton(
+                onClick = onBackupSaves,
+                enabled = state.ready && !state.busy && !state.launching,
+                container = MaterialTheme.colorScheme.secondaryContainer,
+                content = MaterialTheme.colorScheme.onSecondaryContainer,
+                height = 48.dp,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Filled.Done, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Back up saves", style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            }
+            ExpressiveButton(
+                onClick = onRestoreSaves,
+                enabled = state.ready && !state.busy && !state.launching,
+                container = MaterialTheme.colorScheme.surfaceContainerHighest,
+                content = MaterialTheme.colorScheme.onSurface,
+                height = 48.dp,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Restore saves", style = MaterialTheme.typography.labelLarge, maxLines = 1)
             }
         }
     }

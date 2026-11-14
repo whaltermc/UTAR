@@ -17,3 +17,4 @@ natives/.sconsign.dblite
 runtime/
 *.log
 utar-log-*.txt
+logs/

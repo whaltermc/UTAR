@@ -1,5 +1,5 @@
 #include "fmod_assets.h"
-#include "fmod_studio_module.h"
+#include "fmod_studio_editor_module.h"
 
 using namespace godot;
 
@@ -258,11 +258,11 @@ void EventAsset::set_event_ref(FMOD::Studio::EventDescription* event_description
 FMOD::Studio::EventDescription* EventAsset::get_event_description() const
 {
 	FMOD::Studio::EventDescription* event_description = nullptr;
-	FMOD::Studio::System* studio_system = FMODStudioModule::get_singleton()->get_studio_system();
+	FMOD::Studio::System* studio_system = FMODStudioEditorModule::get_singleton()->get_studio_system();
 
 	if (studio_system)
 	{
-		FMODStudioModule::get_singleton()->get_studio_system()->getEvent(get_path().utf8().get_data(),
+		FMODStudioEditorModule::get_singleton()->get_studio_system()->getEvent(get_path().utf8().get_data(),
 				&event_description);
 	}
 
@@ -497,7 +497,7 @@ void ParameterAsset::set_parameter_ref(const FMOD_STUDIO_PARAMETER_DESCRIPTION& 
 	{
 		raw_buffer.resize(actual_size);
 
-		FMOD::Studio::System* studio_system = FMODStudioModule::get_singleton()->get_studio_system();
+		FMOD::Studio::System* studio_system = FMODStudioEditorModule::get_singleton()->get_studio_system();
 		if (studio_system)
 		{
 			result = studio_system->lookupPath(std::as_const(guid), &raw_buffer[0], actual_size, &actual_size);
@@ -539,7 +539,7 @@ void ParameterAsset::set_parameter_ref(const FMOD_STUDIO_PARAMETER_DESCRIPTION& 
 			{
 				raw_buffer.resize(actual_size);
 
-				FMOD::Studio::System* studio_system = FMODStudioModule::get_singleton()->get_studio_system();
+				FMOD::Studio::System* studio_system = FMODStudioEditorModule::get_singleton()->get_studio_system();
 				if (studio_system)
 				{
 					result = studio_system->getParameterLabelByID(parameter_description.id, i, &raw_buffer[0],

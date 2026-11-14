@@ -8,6 +8,8 @@ import os
 # Requires:
 #   * godot-cpp for the matching engine (4.1.4), at natives/godot-cpp
 #     - override with GODOT_CPP_PATH or `scons godot_cpp=/path/to/godot-cpp`
+#   * vendored fmod-for-godot addon source (with the UTAP patch applied) at
+#     natives/fmod-for-godot/src
 #   * FMOD Studio API 2.02.14 for Android at
 #     runtime/fmodstudioapi20214android/api
 #     - override with FMOD_SDK_ROOT or `scons fmod_sdk=/path/to/api`
@@ -92,11 +94,13 @@ if not fmod_available:
     print("warning: FMOD Studio SDK for %s not found under %s" % (abi_dir, fmod_api))
     print("         skipping libfmod_extension; set FMOD_SDK_ROOT to the SDK's api/ directory.")
 
+fmod_root = os.path.join(NATIVES_DIR, "fmod-for-godot")
+
 env.Append(CPPPATH=[
     "threen/src/",
     "inkcpp/src/",
     "utinternal/src/",
-    "fmod/src/",
+    "fmod-for-godot/src",
     os.path.join(godot_cpp, "include"),
     os.path.join(godot_cpp, "gdextension"),
     "inkcpp/inkcpp/",
@@ -104,6 +108,10 @@ env.Append(CPPPATH=[
     "inkcpp/shared/private/",
     "inkcpp/shared/public/",
 ])
+
+# FMOD debug logging matches UTAP's build (template_debug only).
+if env["target"] == "template_debug":
+    env.Append(CPPDEFINES=["FMOD_DEBUG"])
 
 # Platform-specific defines needed by fmod-for-godot source
 if env["platform"] == "android":
@@ -178,14 +186,14 @@ inkcpp_sources += Glob("inkcpp/inkcpp/collections/*.cpp")
 
 internal_sources = Glob("utinternal/src/*.cpp")
 
-fmod_sources = Glob("fmod/src/*.cpp")
-# Exclude editor-only source from root Glob for non-editor builds
-if env["target"] not in ["editor", "template_debug"]:
-    fmod_sources = [s for s in fmod_sources if "editor" not in str(s)]
-fmod_sources += Glob("fmod/src/api/*.cpp")
-fmod_sources += Glob("fmod/src/misc/*.cpp")
-fmod_sources += Glob("fmod/src/scene/*.cpp")
-fmod_sources += Glob("fmod/src/utils/*.cpp")
+# Vendored fmod-for-godot addon source (MIT, with the UTAP patch applied) plus
+# fmod_scene_register.cpp — the runtime entry point exporting fmod_library_init.
+# The addon's own register_types.cpp (pre-4.1 GDExtension API) was dropped.
+fmod_sources = Glob(os.path.join(fmod_root, "src", "*.cpp"))
+fmod_sources += Glob(os.path.join(fmod_root, "src", "api", "*.cpp"))
+fmod_sources += Glob(os.path.join(fmod_root, "src", "misc", "*.cpp"))
+fmod_sources += Glob(os.path.join(fmod_root, "src", "scene", "*.cpp"))
+fmod_sources += Glob(os.path.join(fmod_root, "src", "utils", "*.cpp"))
 
 # One shared library per GDExtension: no combined .so and no symlink aliases.
 # Each library only contains the code for the extension it belongs to, so a

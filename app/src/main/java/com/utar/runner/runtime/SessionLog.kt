@@ -3,6 +3,7 @@ package com.utar.runner.runtime
 import android.content.Context
 import android.os.SystemClock
 import android.util.Log
+import com.utar.runner.BuildConfig
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -35,11 +36,15 @@ object SessionLog {
     @Volatile private var processTag = "?"
     @Volatile private var startedAt = SystemClock.elapsedRealtime()
 
+    /** Verbose logging and launch diagnostics are compiled out of release behaviour at runtime. */
+    @Volatile private var debugEnabled = BuildConfig.DEBUG
+
     fun init(context: Context) {
         val directory = File(context.filesDir, "logs").apply { mkdirs() }
         logFile = File(directory, FILE_NAME)
         processTag = readProcessTag(context)
         startedAt = SystemClock.elapsedRealtime()
+        debugEnabled = BuildConfig.DEBUG
         installCrashHandler()
         i(
             "Session started on ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} " +
@@ -48,7 +53,9 @@ object SessionLog {
         )
     }
 
-    fun i(message: String) = write("I", message)
+    fun i(message: String) {
+        if (debugEnabled) write("I", message)
+    }
 
     fun w(message: String) = write("W", message)
 
@@ -56,7 +63,9 @@ object SessionLog {
         write("E", message + (error?.let { " (${it.javaClass.simpleName}: ${it.message})" } ?: ""))
 
     /** Logs [label] with the milliseconds since this process started, for launch profiling. */
-    fun mark(label: String) = write("I", "[+${SystemClock.elapsedRealtime() - startedAt}ms] $label")
+    fun mark(label: String) {
+        if (debugEnabled) write("I", "[+${SystemClock.elapsedRealtime() - startedAt}ms] $label")
+    }
 
     fun file(): File? = logFile
 

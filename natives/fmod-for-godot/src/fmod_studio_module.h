@@ -51,23 +51,6 @@ public:
 	using FMOD_STUDIO_INSTANCETYPE = ::FMOD_STUDIO_INSTANCETYPE;
 };
 
-class FMODSettings : public RefCounted
-{
-	GDCLASS(FMODSettings, RefCounted);
-
-protected:
-	static void _bind_methods();
-
-public:
-	FMODSettings();
-
-private:
-	void add_fmod_settings();
-	void add_setting(const String& name, const Variant& default_value, Variant::Type type,
-			PropertyHint hint = PROPERTY_HINT_NONE, const String& hint_string = "",
-			int usage = PROPERTY_USAGE_DEFAULT);
-};
-
 VARIANT_ENUM_CAST(FMODStudioModule::FMOD_STUDIO_LOADING_STATE);
 VARIANT_ENUM_CAST(FMODStudioModule::FMOD_STUDIO_LOAD_MEMORY_MODE);
 VARIANT_ENUM_CAST(FMODStudioModule::FMOD_STUDIO_PARAMETER_TYPE);
