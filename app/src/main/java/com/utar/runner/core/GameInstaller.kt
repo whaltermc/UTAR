@@ -238,8 +238,9 @@ class GameInstaller(private val context: Context) {
                 SessionLog.w("Font ${entry.path}: skipped (too large to scan: ${entry.size} bytes)")
                 continue
             }
-            val data = runCatching { pack.readBytes(entry, MAX_FONT_READ_BYTES) }.getOrElse {
-                SessionLog.w("Font ${entry.path}: unreadable (${it.message})")
+            val data = runCatching { pack.readBytes(entry, MAX_FONT_READ_BYTES) }.getOrNull()
+            if (data == null) {
+                SessionLog.w("Font ${entry.path}: unreadable (read failed)")
                 fontBadCount++
                 continue
             }
