@@ -232,7 +232,17 @@ class GameInstaller(private val context: Context) {
                 fontBadCount++
                 continue
             }
-            val data = pack.readBytes(entry)
+            // Color emoji fonts are multi-MB (the game's NotoColorEmoji is ~9MB compressed);
+            // the generic 4MB read limit would throw and abort staging.
+            if (entry.size > MAX_FONT_READ_BYTES) {
+                SessionLog.w("Font ${entry.path}: skipped (too large to scan: ${entry.size} bytes)")
+                continue
+            }
+            val data = runCatching { pack.readBytes(entry, MAX_FONT_READ_BYTES) }.getOrElse {
+                SessionLog.w("Font ${entry.path}: unreadable (${it.message})")
+                fontBadCount++
+                continue
+            }
             val integrityOk = md5(data).contentEquals(entry.md5)
             val format = fontFormat(data)
             fontCount++
@@ -361,6 +371,7 @@ class GameInstaller(private val context: Context) {
         private const val SCENE_VIEW_SCRIPT = "res://ui/components/Game/SceneView/SceneView.gd"
 
         private val FONT_EXTENSIONS = setOf("ttf", "otf", "ttc", "otc", "woff", "woff2", "fnt", "fontdata")
+        private const val MAX_FONT_READ_BYTES = 64L * 1024 * 1024
 
         private fun fontFormat(data: ByteArray): String? {
             if (data.size < 4) return "empty"
