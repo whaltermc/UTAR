@@ -55,7 +55,17 @@ object LogExport {
         appendLine()
         appendLine("=== Game log (user://logs/godot.log) ===")
         appendLine(godotLog(context) ?: "(no Godot log file found)")
+        appendLine()
+        appendLine("=== Game scripts (from the staged pack, captured at install) ===")
+        appendLine(scriptDump(context) ?: "(no script dump found)")
     }
+
+    /** Scripts the installer extracted from the pack, for diagnosing in-game behaviour. */
+    private fun scriptDump(context: Context): String? =
+        File(context.filesDir, "logs/scripts-dump.txt")
+            .takeIf { it.isFile }
+            ?.let { runCatching { it.readText() }.getOrNull() }
+            ?.takeLast(MAX_SECTION_CHARS)
 
     private fun logcat(): String {
         val pids = LinkedHashSet<Int>()
