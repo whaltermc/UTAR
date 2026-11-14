@@ -156,9 +156,7 @@ void StudioEventEmitterImpl<T>::_get_property_list(List<PropertyInfo>* p_list) c
 		Array values = parameters.values();
 		if (Engine::get_singleton()->is_editor_hint())
 		{
-#ifdef TOOLS_ENABLED
 			values.sort_custom(Callable(FMODStudioEditorModule::get_singleton(), "sort_parameters_by_name"));
-#endif
 		}
 
 		for (int i = 0; i < values.size(); i++)
@@ -321,6 +319,8 @@ void StudioEventEmitterImpl<T>::play_instance()
 			}
 
 			event_instance->set_3d_attributes(attributes);
+			event_instance->set_volume(volume);
+			event_instance->set_paused(paused);
 
 			for (int i = 0; i < overridden_parameters.size(); i++)
 			{
@@ -636,6 +636,12 @@ float StudioEventEmitterImpl<T>::get_max_distance()
 
 void StudioEventEmitter2D::_bind_methods()
 {
+	ClassDB::bind_method(D_METHOD("set_volume", "volume"), &StudioEventEmitter2D::set_volume);
+	ClassDB::bind_method(D_METHOD("get_volume"), &StudioEventEmitter2D::get_volume);
+	ClassDB::bind_method(D_METHOD("set_paused", "paused"), &StudioEventEmitter2D::set_paused);
+	ClassDB::bind_method(D_METHOD("is_paused"), &StudioEventEmitter2D::is_paused);
+	ClassDB::bind_method(D_METHOD("set_playing", "playing"), &StudioEventEmitter2D::set_playing);
+	ClassDB::bind_method(D_METHOD("is_playing"), &StudioEventEmitter2D::is_playing);
 	ClassDB::bind_method(D_METHOD("handle_game_event", "game_event"), &StudioEventEmitter2D::handle_game_event);
 	ClassDB::bind_method(D_METHOD("play"), &StudioEventEmitter2D::play);
 	ClassDB::bind_method(D_METHOD("stop"), &StudioEventEmitter2D::stop);
@@ -670,6 +676,9 @@ void StudioEventEmitter2D::_bind_methods()
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "trigger_once"), "set_trigger_once", "get_trigger_once");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rigidbody", PROPERTY_HINT_NODE_TYPE, "PhysicsBody2D"), "set_rigidbody",
 			"get_rigidbody");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "volume"), "set_volume", "get_volume");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "paused"), "set_paused", "is_paused");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "playing"), "set_playing", "is_playing");
 	ADD_SIGNAL(MethodInfo("event_changed", PropertyInfo(Variant::STRING, "value")));
 }
 
@@ -855,6 +864,12 @@ Dictionary StudioEventEmitter2D::get_overridden_parameters() const
 
 void StudioEventEmitter3D::_bind_methods()
 {
+	ClassDB::bind_method(D_METHOD("set_volume", "volume"), &StudioEventEmitter3D::set_volume);
+	ClassDB::bind_method(D_METHOD("get_volume"), &StudioEventEmitter3D::get_volume);
+	ClassDB::bind_method(D_METHOD("set_paused", "paused"), &StudioEventEmitter3D::set_paused);
+	ClassDB::bind_method(D_METHOD("is_paused"), &StudioEventEmitter3D::is_paused);
+	ClassDB::bind_method(D_METHOD("set_playing", "playing"), &StudioEventEmitter3D::set_playing);
+	ClassDB::bind_method(D_METHOD("is_playing"), &StudioEventEmitter3D::is_playing);
 	ClassDB::bind_static_method("StudioEventEmitter3D", D_METHOD("update_active_emitters"),
 			&StudioEventEmitter3D::update_active_emitters);
 	ClassDB::bind_method(D_METHOD("handle_game_event", "game_event"), &StudioEventEmitter3D::handle_game_event);
@@ -891,6 +906,9 @@ void StudioEventEmitter3D::_bind_methods()
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "trigger_once"), "set_trigger_once", "get_trigger_once");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rigidbody", PROPERTY_HINT_NODE_TYPE, "PhysicsBody3D"), "set_rigidbody",
 			"get_rigidbody");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "volume"), "set_volume", "get_volume");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "paused"), "set_paused", "is_paused");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "playing"), "set_playing", "is_playing");
 	ADD_SIGNAL(MethodInfo("event_changed", PropertyInfo(Variant::STRING, "value")));
 }
 
@@ -1102,4 +1120,94 @@ void StudioEventEmitter3D::set_overridden_parameters(const Dictionary& overridde
 Dictionary StudioEventEmitter3D::get_overridden_parameters() const
 {
 	return implementation.overridden_parameters;
+}
+
+void StudioEventEmitter2D::set_volume(float p_volume)
+{
+	implementation.volume = p_volume;
+	if (implementation.event_instance.is_valid() && implementation.event_instance->is_valid())
+	{
+		implementation.event_instance->set_volume(p_volume);
+	}
+}
+
+float StudioEventEmitter2D::get_volume() const
+{
+	return implementation.volume;
+}
+
+void StudioEventEmitter2D::set_paused(bool p_paused)
+{
+	implementation.paused = p_paused;
+	if (implementation.event_instance.is_valid() && implementation.event_instance->is_valid())
+	{
+		implementation.event_instance->set_paused(p_paused);
+	}
+}
+
+bool StudioEventEmitter2D::is_paused() const
+{
+	return implementation.paused;
+}
+
+void StudioEventEmitter2D::set_playing(bool p_playing)
+{
+	if (p_playing)
+	{
+		play();
+	}
+	else
+	{
+		stop();
+	}
+}
+
+bool StudioEventEmitter2D::is_playing()
+{
+	return implementation.is_playing();
+}
+
+void StudioEventEmitter3D::set_volume(float p_volume)
+{
+	implementation.volume = p_volume;
+	if (implementation.event_instance.is_valid() && implementation.event_instance->is_valid())
+	{
+		implementation.event_instance->set_volume(p_volume);
+	}
+}
+
+float StudioEventEmitter3D::get_volume() const
+{
+	return implementation.volume;
+}
+
+void StudioEventEmitter3D::set_paused(bool p_paused)
+{
+	implementation.paused = p_paused;
+	if (implementation.event_instance.is_valid() && implementation.event_instance->is_valid())
+	{
+		implementation.event_instance->set_paused(p_paused);
+	}
+}
+
+bool StudioEventEmitter3D::is_paused() const
+{
+	return implementation.paused;
+}
+
+void StudioEventEmitter3D::set_playing(bool p_playing)
+{
+	if (p_playing)
+	{
+		play();
+	}
+	else
+	{
+		stop();
+	}
+}
+
+bool StudioEventEmitter3D::is_playing()
+{
+	return implementation.is_playing();
 }

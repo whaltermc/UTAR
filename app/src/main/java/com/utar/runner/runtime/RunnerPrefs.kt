@@ -75,7 +75,34 @@ class RunnerPrefs(context: Context) {
             .remove(KEY_INSTALL_SIZE)
             .remove(KEY_INSTALL_TIME)
             .remove(KEY_INSTALL_PATCHED)
+            .remove(KEY_STAGED_SIZE)
+            .remove(KEY_STAGED_MTIME)
+            .remove(KEY_SOURCE_URI)
             .apply()
+    }
+
+    /** Cheap identity of the staged pack: size + lastModified, no full hash. */
+    data class StagedPackInfo(val sizeBytes: Long, val lastModifiedMs: Long)
+
+    fun stagedPackInfo(): StagedPackInfo? {
+        val size = prefs.getLong(KEY_STAGED_SIZE, -1L)
+        val lastModified = prefs.getLong(KEY_STAGED_MTIME, -1L)
+        if (size < 0L || lastModified < 0L) return null
+        return StagedPackInfo(size, lastModified)
+    }
+
+    fun recordStagedPack(info: StagedPackInfo) {
+        prefs.edit()
+            .putLong(KEY_STAGED_SIZE, info.sizeBytes)
+            .putLong(KEY_STAGED_MTIME, info.lastModifiedMs)
+            .apply()
+    }
+
+    /** Persistable source URI, so a changed/missing staged pack can be re-copied later. */
+    fun sourceUri(): String? = prefs.getString(KEY_SOURCE_URI, null)
+
+    fun storeSourceUri(value: String) {
+        prefs.edit().putString(KEY_SOURCE_URI, value).apply()
     }
 
     fun renderingMethodOriginal(): String? = prefs.getString(KEY_RENDERING_METHOD_ORIGINAL, null)
@@ -132,6 +159,9 @@ class RunnerPrefs(context: Context) {
         const val KEY_INSTALL_SIZE = "install_size"
         const val KEY_INSTALL_TIME = "install_time"
         const val KEY_INSTALL_PATCHED = "install_patched"
+        const val KEY_STAGED_SIZE = "staged_size"
+        const val KEY_STAGED_MTIME = "staged_mtime"
+        const val KEY_SOURCE_URI = "source_uri"
         const val KEY_RENDERING_METHOD_ORIGINAL = "rendering_method_original"
         const val KEY_SLOT_PATH = "renderer_slot_path"
         const val KEY_SLOT_OFFSET = "renderer_slot_offset"

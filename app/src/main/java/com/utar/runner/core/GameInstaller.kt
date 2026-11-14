@@ -1,6 +1,7 @@
 package com.utar.runner.core
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
@@ -16,9 +17,13 @@ import java.io.File
  * of the game's GDExtensions are loaded instead of the desktop-only ones.
  *
  * The copy is what makes loading fast: the engine reads the pack from internal storage
- * instead of streaming it out of a content provider on every launch.
+ * instead of streaming it out of a content provider on every launch. Later launches never
+ * copy again — the staged pack is validated by size + lastModified only, and the source
+ * content URI is kept around so a missing/changed stage can be re-copied from background.
  */
 class GameInstaller(private val context: Context) {
+
+    private val prefs = RunnerPrefs(context)
 
     data class Outcome(
         val packFile: File,
@@ -30,6 +35,32 @@ class GameInstaller(private val context: Context) {
     )
 
     fun installedPack(): File? = packFile().takeIf { it.isFile }
+
+    /**
+     * Launch-time staging check. Returns the staged pack when its size + lastModified still
+     * match what was recorded at install time — no copy, no hash, no pack indexing. Only when
+     * the stage is missing or changed does it re-copy from the persisted source URI, on IO.
+     */
+    suspend fun ensureStaged(
+        onStage: (stage: String, progress: Float) -> Unit,
+    ): File = withContext(Dispatchers.IO) {
+        val target = packFile()
+        val record = prefs.stagedPackInfo()
+        if (target.isFile && record != null &&
+            target.length() == record.sizeBytes &&
+            target.lastModified() == record.lastModifiedMs
+        ) {
+            SessionLog.mark("Staging: staged pack matches (size+mtime) — no copy needed")
+            return@withContext target
+        }
+
+        SessionLog.mark("Staging: staged pack missing or changed — re-copying from source")
+        val sourceUri = prefs.sourceUri()
+            ?: throw IllegalStateException(
+                "The installed game data is missing or changed. Choose your .pck again.",
+            )
+        install(Uri.parse(sourceUri), prefs.installRecord()?.fileName, onStage).packFile
+    }
 
     fun clear() {
         workDirectory().deleteRecursively()
@@ -155,20 +186,36 @@ class GameInstaller(private val context: Context) {
             }
         }
 
-        val sceneViewEntry = pack.entries.firstOrNull { it.path == SCENE_VIEW_SCRIPT }
-        if (sceneViewEntry != null && !sceneViewEntry.isEncrypted && sceneViewEntry.size <= MAX_CONFIG_BYTES) {
-            val original = String(pack.readBytes(sceneViewEntry), Charsets.UTF_8)
-            val (patchedSource, changes) = ScriptPatcher.trimLoadThreadedRequestArgs(original)
-            if (changes.isNotEmpty()) {
-                replacements[SCENE_VIEW_SCRIPT] = patchedSource.toByteArray(Charsets.UTF_8)
-                for ((originalCall, trimmedCall) in changes) {
-                    SessionLog.i(
-                        "SceneView.gd: trimmed load_threaded_request args: " +
-                            "original='$originalCall' trimmed='$trimmedCall'",
-                    )
-                }
+        // Fix known GDScript issues in every script the pack carries — parse errors on the
+        // target engine (e.g. load_threaded_request called with a 5th argument) that keep a
+        // script from compiling. Over-argued calls are trimmed to the documented maximum.
+        //
+        // Deliberately NOT applied to SceneView.gd: trimming its 5-arg call makes the script
+        // compile for the first time on 4.1.4, activating a per-line scene-art loader that
+        // feeds dialogue text into ResourceLoader.load ("No loader found" spam) and leaves
+        // whole scenes black. UTAP ships that script unpatched (it simply fails to compile)
+        // and the game renders fine through its normal path, so parity wins here.
+        val scriptScanStarted = SystemClock.elapsedRealtime()
+        var scriptFixCount = 0
+        for (entry in pack.entries) {
+            if (!entry.path.endsWith(".gd", ignoreCase = true)) continue
+            if (entry.path == SCENE_VIEW_SCRIPT) continue
+            if (entry.isEncrypted || entry.size <= 0L || entry.size > MAX_CONFIG_BYTES) continue
+            val original = String(pack.readBytes(entry), Charsets.UTF_8)
+            val (patched, fixes) = ScriptPatcher.fix(original)
+            if (fixes.isEmpty()) continue
+            replacements[entry.path] = patched.toByteArray(Charsets.UTF_8)
+            scriptFixCount += fixes.size
+            for (fix in fixes) {
+                SessionLog.i(
+                    "Script ${entry.path}: ${fix.rule}: '${fix.original}' -> '${fix.patched}'",
+                )
             }
         }
+        SessionLog.mark(
+            "Install: script issue scan fixed $scriptFixCount call(s) " +
+                "in ${SystemClock.elapsedRealtime() - scriptScanStarted}ms",
+        )
 
         val steamEntry = pack.entries.firstOrNull { it.path == STEAM_PLATFORM_SCRIPT }
         if (steamEntry != null && !steamEntry.isEncrypted && steamEntry.size <= MAX_CONFIG_BYTES) {
@@ -202,7 +249,6 @@ class GameInstaller(private val context: Context) {
         }
 
         // A different pack has its own renderer setting; the remembered original is stale now.
-        val prefs = RunnerPrefs(context)
         prefs.resetRendererOverride()
 
         // Pre-align for the currently selected backend so the first launch does not need to index.
@@ -214,6 +260,11 @@ class GameInstaller(private val context: Context) {
             SessionLog.w("Could not pre-align renderer for ${prefs.backend.label}: ${it.message}")
         }
         SessionLog.mark("Install: renderer alignment in ${SystemClock.elapsedRealtime() - alignStarted}ms")
+
+        // Record the staged pack's cheap identity (size + lastModified) and keep the source
+        // URI around so later launches can validate — and re-copy — without any hashing.
+        prefs.recordStagedPack(RunnerPrefs.StagedPackInfo(target.length(), target.lastModified()))
+        storeSourceUri(uri)
 
         onStage("Finishing up", 0.97f)
         SessionLog.i(
@@ -247,6 +298,17 @@ class GameInstaller(private val context: Context) {
             if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
         }
     }.getOrNull()
+
+    /** Keeps the content grant alive across process restarts so [ensureStaged] can re-copy. */
+    private fun storeSourceUri(uri: Uri) {
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }.onFailure { SessionLog.w("Source grant is not persistable; re-copying later may need a fresh pick") }
+        prefs.storeSourceUri(uri.toString())
+    }
 
     private fun displayName(uri: Uri): String? = runCatching {
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->

@@ -11,18 +11,19 @@ android {
         applicationId = "com.utar.runner"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.2"
 
-        // 64-bit ABIs only: the bundled Godot runtime and the custom Android
+        // arm64-v8a only: the bundled Godot runtime and the custom Android
         // extension build from natives/android/<abi>/ both have to match.
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
@@ -52,16 +53,15 @@ android {
     sourceSets["main"].assets.srcDir(rootProject.file("natives/utap_shims"))
 }
 
-// Prefer a locally built export template when the project ships one,
-// otherwise pull the matching official Godot Android library from Maven.
-val localGodotAar = file("libs/godot-lib.4.1.4.stable.template_release.aar")
-
+// Always use the official Godot 4.1.4 export template from Maven. A locally built
+// (custom) engine AAR broke font loading (its TextServer/FreeType path); until that
+// template is rebuilt with font support, the official one is the only supported engine.
 dependencies {
-    if (localGodotAar.isFile) {
-        implementation(files(localGodotAar))
-    } else {
-        implementation("org.godotengine:godot:4.1.4.stable")
-    }
+    implementation("org.godotengine:godot:4.1.4.stable")
+
+    // FMOD's Java bridge (org.fmod.FMOD) must be dexed into the APK so the native
+    // FMOD libraries can reach the JVM on Android, matching UTAP's FmodPlugin.
+    implementation(files("libs/fmod.jar"))
 
     implementation("androidx.core:core-ktx:1.12.0")
     // The Godot library extends FragmentActivity but only declares androidx.fragment at

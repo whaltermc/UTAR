@@ -380,10 +380,3 @@ FMOD::System* FMODStudioModule::get_core_system() const
 	studio_system->getCoreSystem(&core_system);
 	return core_system;
 }
-void FMODSettings::_bind_methods()
-{
-}
-
-FMODSettings::FMODSettings()
-{
-}

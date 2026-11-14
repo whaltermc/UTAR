@@ -6,13 +6,13 @@ import org.junit.Test
 class ScriptPatcherTest {
 
     @Test
-    fun `trims 5 args to 4`() {
-        val source = "var r = ResourceLoader.load_threaded_request(\"res://a.tscn\", null, true, 0, extra_arg)"
+    fun `trims 5 args to 4 and forces sub-threaded load`() {
+        val source = "var r = ResourceLoader.load_threaded_request(\"res://a.tscn\", null, false, 0, extra_arg)"
         val (patched, changes) = ScriptPatcher.trimLoadThreadedRequestArgs(source)
 
         assertEquals(1, changes.size)
         assertEquals(
-            "load_threaded_request(\"res://a.tscn\", null, true, 0, extra_arg)",
+            "load_threaded_request(\"res://a.tscn\", null, false, 0, extra_arg)",
             changes[0].first,
         )
         assertEquals(
@@ -124,7 +124,7 @@ class ScriptPatcherTest {
 
         assertEquals(1, changes.size)
         assertEquals(
-            "load_threaded_request(\"a.tscn\", null, true, 0, extra)",
+            "load_threaded_request(\"a.tscn\", null, true, 0)",
             changes[0].second,
         )
     }

@@ -44,7 +44,10 @@ object LogExport {
         appendLine("=== Runner session log ===")
         appendLine(SessionLog.contents().ifBlank { "(empty)" })
         appendLine()
-        appendLine("=== Engine output (logcat, launcher + game process) ===")
+        appendLine("=== Engine output (captured during the session) ===")
+        appendLine(capturedLogcat(context) ?: "(no captured engine output)")
+        appendLine()
+        appendLine("=== Engine output (logcat ring buffer, launcher + game process) ===")
         appendLine(logcat().ifBlank { "(no engine output captured)" })
         appendLine()
         appendLine("=== Android crash log (logcat -b crash) ===")
@@ -71,6 +74,12 @@ object LogExport {
         }
         return sections.joinToString("\n\n").takeLast(MAX_SECTION_CHARS)
     }
+
+    private fun capturedLogcat(context: Context): String? =
+        File(context.filesDir, "logs/godot-logcat.txt")
+            .takeIf { it.isFile }
+            ?.let { runCatching { it.readText() }.getOrNull() }
+            ?.takeLast(MAX_SECTION_CHARS)
 
     private fun crashLogcat(): String = runCatching {
         val process = ProcessBuilder("logcat", "-d", "-v", "time", "-b", "crash")

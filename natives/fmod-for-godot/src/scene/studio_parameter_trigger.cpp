@@ -148,9 +148,7 @@ void StudioParameterTrigger::_get_property_list(List<PropertyInfo>* p_list) cons
 		Array values = parameters.values();
 		if (Engine::get_singleton()->is_editor_hint())
 		{
-#ifdef TOOLS_ENABLED
 			values.sort_custom(Callable(FMODStudioEditorModule::get_singleton(), "sort_parameters_by_name"));
-#endif
 		}
 
 		for (int64_t i = 0; i < values.size(); i++)

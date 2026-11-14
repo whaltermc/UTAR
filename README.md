@@ -9,6 +9,8 @@ GDExtensions for Android builds.
 ```
 app/      Android app: home UI, PCK install + patch, Godot game activity
 natives/  sources for the game's GDExtensions (build output is not committed)
+runtime/  FMOD Studio SDK (local only, not committed)
+logs/     exported session/crash logs (not committed)
 ```
 
 ## Requirements
@@ -33,8 +35,8 @@ natives:
 ./gradlew :app:assembleDebug
 ```
 
-The APK targets `arm64-v8a` and `x86_64` (see `abiFilters`). Add `armeabi-v7a` there if you need
-32-bit devices, together with matching extension builds.
+The APK targets `arm64-v8a` only (see `abiFilters`); add other ABIs via `ABIS` on `build.sh`
+together with matching extension builds.
 
 ## Extensions in `natives/`
 
@@ -43,8 +45,15 @@ The APK targets `arm64-v8a` and `x86_64` (see `abiFilters`). Add `armeabi-v7a` t
 | `threen/` | `libthreen.so` | `threen_library_init` |
 | `inkcpp/` (bridge + inkcpp runtime) | `libinkcpp.so` | `inkcpp_library_init`, `utink_library_init` |
 | `utinternal/` | `libinternal.so` | `internal_library_init`, `uinternal_library_init` |
-| `fmod/` | `libfmod_extension.so` | `fmod_library_init` |
+| `fmod-for-godot/` (upstream addon + UTAP patch) | `libfmod_extension.so` | `fmod_library_init` |
 | `utap_shims/` | GDScript (`json_utils.gd`) | replaces the proprietary `jsonutils` extension |
+
+The FMOD extension follows the UTAP method: the vendored `fmod-for-godot` source (upstream addon
+with `fmod-for-godot.patch` applied: emitter volume/paused/playing bindings, real `FMODSettings`)
+is the compile source, and `fmod_scene_register.cpp` inside it registers only the runtime scene
+types and exports `fmod_library_init` — the addon's own `register_types.cpp` targets the pre-4.1
+GDExtension API and is dropped. The FMOD Java bridge (`app/libs/fmod.jar`, `org.fmod.FMOD.init`
+in `GameActivity`) runs before the engine starts.
 
 ### Building them
 
@@ -99,7 +108,7 @@ cannot load on Android. On install the app rebuilds every `.gdextension` in the 
 2. pick the packaged native library whose ELF dynamic symbol table exports that symbol;
 3. fall back to matching library names (`libfoo.windows.x86_64.dll` → `libfoo…so`) when no
    symbol match exists;
-4. replace any stale `android.*` lines with `android.arm64` / `android.x86_64` entries pointing at
+4. replace any stale `android.*` lines with an `android.arm64` entry pointing at
    `res://utar_natives/<abi>/<lib>.so`.
 
 That path is intentionally absent from the pack, so Godot 4.1's Android loader falls back to the

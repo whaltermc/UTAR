@@ -49,6 +49,7 @@ class FMODStudioEditorModule : public Object
 {
 	GDCLASS(FMODStudioEditorModule, Object);
 
+public:
 	enum FMODIconType
 	{
 		FMOD_ICONTYPE_PROJECT,

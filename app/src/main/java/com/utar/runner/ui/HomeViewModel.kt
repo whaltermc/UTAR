@@ -13,8 +13,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.utar.runner.GameActivity
 import com.utar.runner.core.GameInstaller
+import com.utar.runner.core.PackWarmup
 import com.utar.runner.core.ProjectSettingsOverride
+import com.utar.runner.core.SaveBackup
 import com.utar.runner.runtime.Backend
+import com.utar.runner.runtime.DebugLog
 import com.utar.runner.runtime.LogExport
 import com.utar.runner.runtime.RunnerPrefs
 import com.utar.runner.runtime.SessionLog
@@ -37,6 +40,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         val packName: String = "",
         val packBytes: Long = 0L,
         val patchedExtensions: Int = 0,
+        /** False until the cheap installed-pack scan finishes; the UI renders immediately. */
+        val ready: Boolean = false,
         val busy: Boolean = false,
         val progress: Float = 0f,
         val stage: String = "",
@@ -47,19 +52,26 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs = RunnerPrefs(application)
     private val installer = GameInstaller(application)
+    private val saveBackup = SaveBackup(application)
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
-        val record = prefs.installRecord()
-        val file = installer.installedPack()
-        _state.value = UiState(
-            backend = prefs.backend,
-            packFile = file,
-            packName = record?.fileName ?: file?.name.orEmpty(),
-            packBytes = file?.length() ?: 0L,
-            patchedExtensions = record?.patchedExtensions ?: 0,
-        )
+        // The Compose screen composes straight away; only this tiny scan waits. No pack
+        // indexing or extension checks happen here — those live in the install/launch flows.
+        viewModelScope.launch {
+            val (record, file) = withContext(Dispatchers.IO) {
+                prefs.installRecord() to installer.installedPack()
+            }
+            _state.value = UiState(
+                backend = prefs.backend,
+                packFile = file,
+                packName = record?.fileName ?: file?.name.orEmpty(),
+                packBytes = file?.length() ?: 0L,
+                patchedExtensions = record?.patchedExtensions ?: 0,
+                ready = true,
+            )
+        }
     }
 
     fun selectBackend(backend: Backend) {
@@ -69,6 +81,57 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissMessages() {
         _state.update { it.copy(notice = null, error = null) }
+    }
+
+    /** Copies the game's user:// save data (minus pack/logs/shader cache) into a zip document. */
+    fun backupSaves(uri: Uri) {
+        val current = _state.value
+        if (current.busy || current.launching) return
+        _state.update { it.copy(busy = true, progress = 0f, stage = "Backing up saves", notice = null, error = null) }
+        viewModelScope.launch {
+            try {
+                val bytes = saveBackup.backup(uri) { stage, progress ->
+                    _state.update { it.copy(stage = stage, progress = progress) }
+                }
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        progress = 1f,
+                        stage = "",
+                        notice = "Saves backed up (" + String.format(
+                            java.util.Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0,
+                        ) + ").",
+                    )
+                }
+            } catch (error: Throwable) {
+                SessionLog.e("Save backup failed", error)
+                _state.update {
+                    it.copy(busy = false, stage = "", error = error.message ?: "Save backup failed.")
+                }
+            }
+        }
+    }
+
+    /** Replaces the game's user:// save data with the contents of a backup zip. */
+    fun restoreSaves(uri: Uri) {
+        val current = _state.value
+        if (current.busy || current.launching) return
+        _state.update { it.copy(busy = true, progress = 0f, stage = "Restoring saves", notice = null, error = null) }
+        viewModelScope.launch {
+            try {
+                val count = saveBackup.restore(uri) { stage, progress ->
+                    _state.update { it.copy(stage = stage, progress = progress) }
+                }
+                _state.update {
+                    it.copy(busy = false, progress = 1f, stage = "", notice = "Restored $count save file(s).")
+                }
+            } catch (error: Throwable) {
+                SessionLog.e("Save restore failed", error)
+                _state.update {
+                    it.copy(busy = false, stage = "", error = error.message ?: "Save restore failed.")
+                }
+            }
+        }
     }
 
     fun install(uri: Uri, displayName: String?) {
@@ -114,10 +177,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Starts the engine. Everything slow happens off the main thread (the previous version opened
-     * and indexed the whole pack on the UI thread here, which is the launch freeze), and the
-     * launcher keeps animating its own "starting" screen until the game process reports that its
-     * window has painted, or dies.
+     * Starts the engine. The launch pipeline runs entirely off the main thread — staging
+     * validation/copy, renderer alignment, page-cache warmup — and only then the Godot
+     * activity is started. The launcher keeps animating its own "starting" screen until the
+     * game process reports that its window has painted, or dies.
      */
     fun launchGame(pack: File) {
         val current = _state.value
@@ -127,15 +190,32 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             val context: Context = getApplication()
+            DebugLog.timing("Launch pipeline: start (${backend.label})")
             SessionLog.mark("Launch requested (${backend.label})")
 
-            SessionLog.mark("Launcher: renderer alignment begins")
+            val staged = try {
+                DebugLog.timing("Stage copy: begins")
+                val stageStarted = SystemClock.elapsedRealtime()
+                val file = installer.ensureStaged { stage, progress ->
+                    _state.update { it.copy(stage = stage, progress = progress) }
+                }
+                DebugLog.timing("Stage copy: finished in ${SystemClock.elapsedRealtime() - stageStarted}ms")
+                file
+            } catch (error: Throwable) {
+                SessionLog.e("Staging failed", error)
+                _state.update {
+                    it.copy(launching = false, stage = "", error = error.message ?: "Staging failed.")
+                }
+                return@launch
+            }
+
+            DebugLog.timing("Renderer alignment: begins")
             val aligned = withContext(Dispatchers.IO) {
-                runCatching { ProjectSettingsOverride.prepare(context, pack, backend) }
+                runCatching { ProjectSettingsOverride.prepare(context, staged, backend) }
                     .onFailure { SessionLog.e("Renderer override failed", it) }
                     .getOrDefault(false)
             }
-            SessionLog.mark("Launcher: renderer alignment finished (aligned=$aligned)")
+            DebugLog.timing("Renderer alignment: finished (aligned=$aligned)")
             if (!aligned) {
                 _state.update {
                     it.copy(
@@ -147,6 +227,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
+            DebugLog.timing("Page-cache warmup: begins")
+            val warmStarted = SystemClock.elapsedRealtime()
+            withContext(Dispatchers.IO) { PackWarmup.warm(staged) }
+            DebugLog.timing("Page-cache warmup: finished in ${SystemClock.elapsedRealtime() - warmStarted}ms")
+
             val ready = CompletableDeferred<Unit>()
             val receiver = object : ResultReceiver(Handler(Looper.getMainLooper())) {
                 override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
@@ -154,9 +239,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             try {
-                SessionLog.mark("Launcher: starting GameActivity")
-                context.startActivity(GameActivity.createIntent(context, pack, backend, receiver))
-                SessionLog.mark("Launcher: GameActivity startActivity returned")
+                DebugLog.timing("Godot activity start: startActivity")
+                context.startActivity(GameActivity.createIntent(context, staged, backend, receiver))
+                DebugLog.timing("Godot activity start: startActivity returned")
             } catch (error: Throwable) {
                 SessionLog.e("Couldn't start the game activity", error)
                 _state.update { it.copy(launching = false, stage = "", error = error.message ?: "Couldn't start the game.") }
