@@ -3,13 +3,14 @@
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/math.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 
 using namespace godot;
 
 InterpolatedCamera3D::InterpolatedCamera3D() {
 	enabled = false;
 	speed = 1.0;
-	process_mode = PROCESS_IDLE;
+	interpolation_mode = PROCESS_IDLE;
 }
 
 InterpolatedCamera3D::~InterpolatedCamera3D() {
@@ -22,7 +23,7 @@ void InterpolatedCamera3D::_notification(int p_what) {
 		} break;
 
 		case NOTIFICATION_INTERNAL_PROCESS: {
-			if (process_mode == PROCESS_PHYSICS) {
+			if (interpolation_mode == PROCESS_PHYSICS) {
 				break;
 			}
 			if (enabled) {
@@ -31,7 +32,7 @@ void InterpolatedCamera3D::_notification(int p_what) {
 		} break;
 
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
-			if (process_mode == PROCESS_IDLE) {
+			if (interpolation_mode == PROCESS_IDLE) {
 				break;
 			}
 			if (enabled) {
@@ -42,14 +43,17 @@ void InterpolatedCamera3D::_notification(int p_what) {
 }
 
 void InterpolatedCamera3D::_process_interpolation(real_t p_delta) {
-	if (!has_node(target)) {
-		return;
-	}
-
-	Node3D *node = Object::cast_to<Node3D>(get_node_or_null(target));
+	Node3D *node = target.is_empty() ? nullptr : Object::cast_to<Node3D>(get_node_or_null(target));
 	if (!node) {
+		// One-shot diagnostic: a camera that is enabled but cannot resolve its
+		// target never moves, which looks like a black/empty 3D scene.
+		if (!warned_missing_target) {
+			warned_missing_target = true;
+			UtilityFunctions::print("InterpolatedCamera3D: target '", String(target), "' not found for ", String(get_path()));
+		}
 		return;
 	}
+	warned_missing_target = false;
 
 	Transform3D target_xform = node->get_global_transform();
 	Transform3D local_transform = get_global_transform();
@@ -104,23 +108,23 @@ bool InterpolatedCamera3D::is_interpolation_enabled() const {
 	return enabled;
 }
 
-void InterpolatedCamera3D::set_process_mode(InterpolatedCamera3D::ProcessMode p_mode) {
-	if (process_mode == p_mode) {
+void InterpolatedCamera3D::set_interpolation_process_mode(InterpolatedCamera3D::InterpolationProcessMode p_mode) {
+	if (interpolation_mode == p_mode) {
 		return;
 	}
-	process_mode = p_mode;
+	interpolation_mode = p_mode;
 	_update_process_mode();
 }
 
-InterpolatedCamera3D::ProcessMode InterpolatedCamera3D::get_process_mode() const {
-	return process_mode;
+InterpolatedCamera3D::InterpolationProcessMode InterpolatedCamera3D::get_interpolation_process_mode() const {
+	return interpolation_mode;
 }
 
 void InterpolatedCamera3D::_update_process_mode() {
 	if (Engine::get_singleton()->is_editor_hint() || !enabled) {
 		set_process_internal(false);
 		set_physics_process_internal(false);
-	} else if (process_mode == PROCESS_IDLE) {
+	} else if (interpolation_mode == PROCESS_IDLE) {
 		set_process_internal(true);
 		set_physics_process_internal(false);
 	} else {
@@ -140,13 +144,13 @@ void InterpolatedCamera3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_interpolation_enabled", "enabled"), &InterpolatedCamera3D::set_interpolation_enabled);
 	ClassDB::bind_method(D_METHOD("is_interpolation_enabled"), &InterpolatedCamera3D::is_interpolation_enabled);
 
-	ClassDB::bind_method(D_METHOD("set_process_mode", "mode"), &InterpolatedCamera3D::set_process_mode);
-	ClassDB::bind_method(D_METHOD("get_process_mode"), &InterpolatedCamera3D::get_process_mode);
+	ClassDB::bind_method(D_METHOD("set_interpolation_process_mode", "mode"), &InterpolatedCamera3D::set_interpolation_process_mode);
+	ClassDB::bind_method(D_METHOD("get_interpolation_process_mode"), &InterpolatedCamera3D::get_interpolation_process_mode);
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "target"), "set_target_path", "get_target_path");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "speed"), "set_speed", "get_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "enabled"), "set_interpolation_enabled", "is_interpolation_enabled");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "process_mode", PROPERTY_HINT_ENUM, "Physics,Idle"), "set_process_mode", "get_process_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "interpolation_process_mode", PROPERTY_HINT_ENUM, "Physics,Idle"), "set_interpolation_process_mode", "get_interpolation_process_mode");
 
 	BIND_ENUM_CONSTANT(PROCESS_PHYSICS);
 	BIND_ENUM_CONSTANT(PROCESS_IDLE);

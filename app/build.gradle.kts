@@ -11,8 +11,8 @@ android {
         applicationId = "com.utar.runner"
         minSdk = 24
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
 
         // arm64-v8a only: the bundled Godot runtime and the custom Android
         // extension build from natives/android/<abi>/ both have to match.
