@@ -461,52 +461,6 @@ bool PckFile::readEntry(size_t p_index, std::vector<uint8_t> &r_out, uint64_t p_
 	return readAt(entry.offset, entry.size, r_out.data(), r_error);
 }
 
-std::vector<std::pair<std::string, std::vector<uint8_t>>> PckFile::patchCtexEntries() {
-	std::vector<std::pair<std::string, std::vector<uint8_t>>> replacements;
-
-	for (size_t i = 0; i < m_entries.size(); i++) {
-		const PckEntry &entry = m_entries[i];
-		if (entry.path.size() < 6 || entry.path.substr(entry.path.size() - 6) != ".ctex") {
-			continue;
-		}
-
-		std::vector<uint8_t> data;
-		std::string error;
-		if (!readEntry(i, data, 64L * 1024 * 1024, error)) {
-			continue;
-		}
-
-		if (data.size() < 8) {
-			continue;
-		}
-
-		// Check magic "CTEX" (little-endian: 0x58455443)
-		if (data[0] != 'C' || data[1] != 'T' || data[2] != 'E' || data[3] != 'X') {
-			continue;
-		}
-
-		// Read version (little-endian u32 at offset 4)
-		uint32_t version = static_cast<uint32_t>(data[4])
-			| (static_cast<uint32_t>(data[5]) << 8)
-			| (static_cast<uint32_t>(data[6]) << 16)
-			| (static_cast<uint32_t>(data[7]) << 24);
-
-		if (version <= 1) {
-			continue; // Already compatible with Godot 4.1.x
-		}
-
-		// Downgrade version to 1 (Godot 4.1.x compatible)
-		data[4] = 1;
-		data[5] = 0;
-		data[6] = 0;
-		data[7] = 0;
-
-		replacements.emplace_back(entry.path, std::move(data));
-	}
-
-	return replacements;
-}
-
 // ---------------------------------------------------------------------------
 // Rewrite
 // ---------------------------------------------------------------------------

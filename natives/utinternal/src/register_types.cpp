@@ -1,6 +1,5 @@
 #include "colorizer.h"
 #include "interpolated_camera_3d.h"
-#include "patch_loader.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/class_db.hpp>
@@ -15,9 +14,6 @@ void initialize_utinternal_module(ModuleInitializationLevel p_level) {
 	}
 	ClassDB::register_class<InterpolatedCamera3D>();
 	ClassDB::register_class<Colorizer>();
-	// GLES3 shader patches: must run after the pack is mounted but before the game
-	// loads any script/scene/shader resources, so SCENE init is the right spot.
-	utinternal::load_shader_patch_pack();
 }
 
 void uninitialize_utinternal_module(ModuleInitializationLevel p_level) {

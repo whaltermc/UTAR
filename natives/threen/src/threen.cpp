@@ -253,8 +253,8 @@ void Threen::_notification(int p_what) {
 			if (!is_active()) {
 				// Make sure that a previous process state was not saved
 				// Only process if "processing" is set
-				set_physics_process_internal(false);
-				set_process_internal(false);
+				set_physics_process(false);
+				set_process(false);
 			}
 		} break;
 
@@ -262,7 +262,7 @@ void Threen::_notification(int p_what) {
 			// Do nothing
 		} break;
 
-		case NOTIFICATION_INTERNAL_PROCESS: {
+		case NOTIFICATION_PROCESS: {
 			// Are we processing during physics time?
 			if (tween_process_mode == TWEEN_PROCESS_PHYSICS) {
 				// Do nothing since we aren't aligned with physics when we should be
@@ -276,7 +276,7 @@ void Threen::_notification(int p_what) {
 			}
 		} break;
 
-		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
+		case NOTIFICATION_PHYSICS_PROCESS: {
 			// Are we processing during 'regular' time?
 			if (tween_process_mode == TWEEN_PROCESS_IDLE) {
 				// Do nothing since we would only process during idle time
@@ -920,7 +920,7 @@ Threen::TweenProcessMode Threen::get_tween_process_mode() const {
 }
 
 bool Threen::is_active() const {
-	return is_processing_internal() || is_physics_processing_internal();
+	return is_processing() || is_physics_processing();
 }
 
 void Threen::set_active(bool p_active) {
@@ -932,10 +932,10 @@ void Threen::set_active(bool p_active) {
 	// Depending on physics or idle, set processing
 	switch (tween_process_mode) {
 		case TWEEN_PROCESS_IDLE:
-			set_process_internal(p_active);
+			set_process(p_active);
 			break;
 		case TWEEN_PROCESS_PHYSICS:
-			set_physics_process_internal(p_active);
+			set_physics_process(p_active);
 			break;
 	}
 }

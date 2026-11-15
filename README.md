@@ -48,8 +48,6 @@ All heavy I/O and byte-precision work lives in `app/src/main/cpp/` (C++17, stati
 | `pck_engine.cpp` | Godot 4.1 PCK v2 reader/writer: header + directory parsing, sidecar index cache (`.meta`), `pread`-based entry reads, streaming rewrite, small override packs |
 | `library_set.cpp` | APK ELF64 scanning + symbol extraction for GDExtension matching |
 | `gdext_rewriter.cpp` | `.gdextension` config rewriting (desktop → `res://utar_natives/<abi>/`) |
-| `script_patcher.cpp` | GDScript compatibility fixes |
-| `settings_override.cpp` | `project.binary` renderer-method alignment |
 | `save_zip.cpp` | `user://` save-data zip backup/restore |
 | `jni_bridge.cpp` | JNI surface (`com.utar.runner.core.NativeCore`) |
 

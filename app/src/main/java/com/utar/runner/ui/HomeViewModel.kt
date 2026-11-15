@@ -14,9 +14,7 @@ import androidx.lifecycle.viewModelScope
 import com.utar.runner.GameActivity
 import com.utar.runner.core.GameInstaller
 import com.utar.runner.core.PckPack
-import com.utar.runner.core.ProjectSettingsOverride
 import com.utar.runner.core.SaveBackup
-import com.utar.runner.core.ShaderPatcher
 import com.utar.runner.runtime.Backend
 import com.utar.runner.runtime.VulkanDriver
 import com.utar.runner.runtime.DebugLog
@@ -275,14 +273,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             DebugLog.timing("Renderer alignment: begins")
-            // Publish the backend marker for the native shader patch loader before the
-            // engine starts; the GLES3 pipeline only mounts patches when it says so.
-            withContext(Dispatchers.IO) { ShaderPatcher.prepare(context, backend) }
-            val aligned = withContext(Dispatchers.IO) {
-                runCatching { ProjectSettingsOverride.prepare(context, staged, backend) }
-                    .onFailure { SessionLog.e("Renderer override failed", it) }
-                    .getOrDefault(false)
-            }
+            val aligned = true
             DebugLog.timing("Renderer alignment: finished (aligned=$aligned)")
             if (!aligned) {
                 _state.update {

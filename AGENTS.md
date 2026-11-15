@@ -14,7 +14,7 @@ Android runner for the *Until Then* Godot 4.1.4 game pack. Kotlin + Compose UI, 
 ## Structure
 - `app/src/main/java/com/utar/runner/` — activities, UI (Compose), runtime helpers
 - `app/src/main/java/com/utar/runner/core/Core.kt` — GameInstaller, PckPack, NativeCore JNI decls
-- `app/src/main/cpp/` — native core: pck_engine, library_set, gdext_rewriter, script_patcher, settings_override, save_zip, jni_bridge
+- `app/src/main/cpp/` — native core: pck_engine, library_set, gdext_rewriter, save_zip, jni_bridge
 - `natives/` — GDExtension sources (threen, inkcpp, utinternal, fmod-for-godot, utap_shims)
 
 ## Conventions
@@ -24,9 +24,16 @@ Android runner for the *Until Then* Godot 4.1.4 game pack. Kotlin + Compose UI, 
 - No custom engine AAR; official Godot 4.1.4 only.
 - Never commit secrets.
 
+## Patch scope
+Patches are extension-only. Core game behavior is never modified:
+- `.gdextension` configs are rewritten to point at Android native libraries (`natives/android/<abi>/`).
+- `jsonutils.dll` is replaced with a GDScript shim (`natives/utap_shims/json_utils.gd`).
+- `SteamPlatform.gd` is replaced with a GDScript stub (no Android Steam build).
+- No script patching, no `project.binary` renderer overrides, no `.ctex` texture downgrades, no GLES3 shader patching.
+
 ## Key flows
-- Install: copy pack → parse index → scan APK natives → rewrite .gdextension configs → patch scripts → rewrite pack → extract fonts → align renderer.
-- Launch: ensureStaged (size+mtime) → font extraction (stamp-keyed) → renderer alignment → start GameActivity in `:godot` process with `--main-pack`.
+- Install: copy pack → parse index → scan APK natives → rewrite .gdextension configs → rewrite pack → extract fonts → start GameActivity.
+- Launch: ensureStaged (size+mtime) → font extraction (stamp-keyed) → start GameActivity in `:godot` process with `--main-pack`.
 
 ## PCK (libutarcore)
 - `PckFile::open` tries sidecar `.meta` cache first (size+mtime keyed), else `parseIndex`; saves cache after parse.

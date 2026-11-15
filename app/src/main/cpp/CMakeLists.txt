@@ -9,8 +9,6 @@ add_library(utarcore SHARED
         core/pck_engine.cpp
         core/library_set.cpp
         core/gdext_rewriter.cpp
-        core/script_patcher.cpp
-        core/settings_override.cpp
         core/save_zip.cpp
         jni/jni_common.cpp
         jni/jni_core.cpp
@@ -18,9 +16,7 @@ add_library(utarcore SHARED
         jni/jni_library.cpp
         jni/jni_gdext.cpp
         jni/jni_script.cpp
-        jni/jni_settings.cpp
         jni/jni_save.cpp
-        jni/jni_marker.cpp
         jni/jni_md5.cpp
         jni/jni_copy.cpp)
 

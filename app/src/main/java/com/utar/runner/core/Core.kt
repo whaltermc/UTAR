@@ -73,7 +73,6 @@ class GameInstaller(private val context: Context) {
         workDirectory().deleteRecursively()
         RunnerPrefs(context).apply {
             clearInstall()
-            resetRendererOverride()
         }
     }
 
@@ -212,38 +211,6 @@ class GameInstaller(private val context: Context) {
             }
         }
 
-        // Fix known GDScript issues in every script the pack carries — parse errors on the
-        // target engine (e.g. load_threaded_request called with a 5th argument) that keep a
-        // script from compiling. Over-argued calls are trimmed to the documented maximum.
-        //
-        // SceneView.gd (the scene-select page's button script) has the same 5-argument
-        // load_threaded_request call. Left unpatched it fails to compile on 4.1.4, so the buttons never
-        // get their unlock state, thumbnails or click handling and the whole page shows greyed out.
-        // The old note here warned that patching it blacks out scenes, but that described a per-line
-        // scene-art loader that this pack's SceneView.gd does not contain. Set PATCH_SCENE_VIEW to
-        // false to go back to the old behaviour (then re-install the pack).
-        val scriptScanStarted = SystemClock.elapsedRealtime()
-        var scriptFixCount = 0
-        for (entry in pack.entries) {
-            if (!entry.path.endsWith(".gd", ignoreCase = true)) continue
-            if (entry.path == SCENE_VIEW_SCRIPT && !PATCH_SCENE_VIEW) continue
-            if (entry.isEncrypted || entry.size <= 0L || entry.size > MAX_CONFIG_BYTES) continue
-            val original = String(pack.readBytes(entry), Charsets.UTF_8)
-            val (patchedSource, fixes) = ScriptPatcher.fix(original)
-            if (fixes.isEmpty()) continue
-            replacements[entry.path] = patchedSource.toByteArray(Charsets.UTF_8)
-            scriptFixCount += fixes.size
-            for (fix in fixes) {
-                PckPatchLog.i(
-                    "Script ${entry.path}: ${fix.rule}: '${fix.original}' -> '${fix.patched}'",
-                )
-            }
-        }
-        PckPatchLog.mark(
-            "Install: script issue scan fixed $scriptFixCount call(s) " +
-                "in ${SystemClock.elapsedRealtime() - scriptScanStarted}ms",
-        )
-
         // Script dump (ground truth for on-device diagnosis) runs natively.
         runCatching {
             val dumpDir = File(context.filesDir, "logs").apply { mkdirs() }
@@ -271,13 +238,6 @@ class GameInstaller(private val context: Context) {
         val patchedConfigs = plans.count { it.patched }
 
         onStage("Patching Android extensions", 0.68f)
-
-        // Patch .ctex texture files with version too new for Godot 4.1.x
-        val ctexReplacements = pack.patchCtexEntries()
-        if (ctexReplacements.isNotEmpty()) {
-            replacements.putAll(ctexReplacements)
-            PckPatchLog.i("Patched ${ctexReplacements.size} .ctex file(s) for Godot 4.1.x compatibility")
-        }
 
         var addedFiles = 0
         if (replacements.isEmpty() && additions.isEmpty()) {
@@ -327,19 +287,6 @@ class GameInstaller(private val context: Context) {
         }.onFailure {
             PckPatchLog.w("Font extraction failed: ${it.message}")
         }
-
-        // A different pack has its own renderer setting; the remembered original is stale now.
-        prefs.resetRendererOverride()
-
-        // Pre-align for the currently selected backend so the first launch does not need to index.
-        onStage("Aligning renderer", 0.95f)
-        val alignStarted = SystemClock.elapsedRealtime()
-        runCatching {
-            ProjectSettingsOverride.prepare(context, target, prefs.backend)
-        }.onFailure {
-            PckPatchLog.w("Could not pre-align renderer for ${prefs.backend.label}: ${it.message}")
-        }
-        PckPatchLog.mark("Install: renderer alignment in ${SystemClock.elapsedRealtime() - alignStarted}ms")
 
         // Record the staged pack's cheap identity (size + lastModified) and keep the source
         // URI around so later launches can validate — and re-copy — without any hashing.
@@ -410,14 +357,9 @@ class GameInstaller(private val context: Context) {
         private const val COPY_BUFFER = 1 shl 20
 
         private const val STORE_SCRIPT = "res://Store.gd"
-        private const val PATCH_SCENE_VIEW = true
-        private const val SCENE_VIEW_SCRIPT = "res://ui/components/Game/SceneView/SceneView.gd"
-
-        private const val MAX_FONT_READ_BYTES = 64L * 1024 * 1024
-        private const val MAX_SCRIPT_DUMP_CHARS = 80_000
-
         private const val STEAM_PLATFORM_SCRIPT = "res://components/DistPlatform/SteamPlatform.gd"
         private const val DLC_SCENE_PREFIX = "res://scenes/_dlc_rdvt/"
+        private const val MAX_SCRIPT_DUMP_CHARS = 80_000
 
         private fun steamPlatformStub(dlcOwned: Boolean): String =
             STEAM_PLATFORM_STUB_TEMPLATE.replace("%DLC_OWNED%", if (dlcOwned) "true" else "false")
@@ -647,18 +589,6 @@ object NativeCore {
     /** GdextPlan blob for [original]; never null (unmatched configs return status 0). */
     external fun gdextPlan(configPath: String, original: String, libraryBlob: ByteArray): ByteArray?
 
-    // --- script patching ----------------------------------------------------------------
-
-    /** ScriptFixResult blob; null on internal failure (callers keep the source untouched). */
-    external fun scriptFix(source: String): ByteArray?
-
-    // --- project settings override --------------------------------------------------------
-
-    /** RendererMethodSlot blob, or null when the pack keeps the engine default. */
-    external fun settingsLocate(packPath: String): ByteArray?
-
-    external fun settingsPatch(packPath: String, offset: Long, length: Int, value: String): Boolean
-
     // --- save backup ------------------------------------------------------------------------
 
     /** Returns bytes written, or -1. Consumes [fd] (the caller must detach it). */
@@ -689,14 +619,6 @@ object NativeCore {
 
     /** Copies [srcFd] (consumed) to [dstPath]; returns bytes copied or -1. */
     external fun copyFile(srcFd: Int, dstPath: String, expectedSize: Long, progress: Progress?): Long
-
-    // --- shader patch marker ----------------------------------------------------------------------
-
-    /** Writes `filesDir/utar_patches/backend.txt`; the native loader only mounts patches when it says so. */
-    external fun markerWrite(filesDir: String, value: String): Boolean
-
-    /** Removes `filesDir/utar_patches` and `filesDir/shader_cache`. */
-    external fun patcherClear(filesDir: String): Boolean
 }
 
 /**
@@ -953,33 +875,6 @@ class PckPack private constructor(
     /** Extracts font source files and .fontdata from the pack to [dstDir]; returns count or -1. */
     fun extractFontFiles(dstDir: String): Int = NativeCore.extractFontFiles(handle, dstDir)
 
-    /**
-     * Scans pack entries for .ctex texture files with a version too new for Godot 4.1.x
-     * and returns replacement payloads with the version downgraded to 1. Entries with
-     * version <= 1 (or unreadable / non-CTEX data) are skipped.
-     */
-    fun patchCtexEntries(): Map<String, ByteArray> {
-        val replacements = LinkedHashMap<String, ByteArray>()
-        for (entry in entries) {
-            if (!entry.path.endsWith(".ctex", ignoreCase = true)) continue
-            val data = readBytes(entry, 64L * 1024 * 1024)
-            if (data.size < 8) continue
-            // Check magic "CTEX" (little-endian)
-            if (data[0] != 'C'.code.toByte() || data[1] != 'T'.code.toByte() ||
-                data[2] != 'E'.code.toByte() || data[3] != 'X'.code.toByte()) continue
-            // Read version (little-endian u32 at offset 4)
-            val version = (data[4].toInt() and 0xFF) or
-                ((data[5].toInt() and 0xFF) shl 8) or
-                ((data[6].toInt() and 0xFF) shl 16) or
-                ((data[7].toInt() and 0xFF) shl 24)
-            if (version <= 1) continue // Already compatible
-            // Downgrade version to 1
-            data[4] = 1; data[5] = 0; data[6] = 0; data[7] = 0
-            replacements[entry.path] = data.copyOf(data.size)
-        }
-        return replacements
-    }
-
     /** Releases the native handle; further reads fail. Called automatically by the finalizer. */
     override fun close() {
         if (handle != 0L) {
@@ -1080,140 +975,6 @@ class PckPack private constructor(
  * The location of the string (offset + length) is cached in prefs after the first locate, so later
  * launches never open or index the pack just to flip a few bytes.
  */
-object ProjectSettingsOverride {
-
-    private const val METHOD_KEY = "rendering/renderer/rendering_method"
-    private const val METHOD_KEY_MOBILE = "$METHOD_KEY.mobile"
-
-    /** 12-byte placeholder that is neither `forward_plus` nor `mobile`, so `usesVulkan()` returns false. */
-    private const val VALUE_PLACEHOLDER_12 = "gl_compatibl"
-    /** 6-byte placeholder that is neither `forward_plus` nor `mobile`. */
-    private const val VALUE_PLACEHOLDER_6 = "gles3 "
-
-    data class MethodSlot(
-        val path: String,
-        val valueOffset: Long,   // absolute file offset of the string payload
-        val valueLength: Int,
-        val currentValue: String,
-    )
-
-    /**
-     * Patches the installed pack so the Java host view matches [backend]. Returns false when the pack's
-     * renderer-method value can't be same-length patched (e.g. an unexpected length), in which case the
-     * caller should tell the user that backend isn't available for this package.
-     */
-    fun prepare(context: Context, pack: File, backend: Backend): Boolean {
-        val prepareStarted = SystemClock.elapsedRealtime()
-        val prefs = RunnerPrefs(context)
-
-        // Nothing to do when the pack is exactly as we last left it for this backend.
-        if (prefs.rendererOverrideStamp == stamp(pack, backend)) {
-            SessionLog.mark("ProjectSettingsOverride: stamp matches, skipping alignment (${backend.name})")
-            return true
-        }
-
-        SessionLog.mark("ProjectSettingsOverride: resolving renderer slot for ${backend.name}")
-        val slot = resolveSlot(prefs, pack) ?: run {
-            // Pack keeps the engine default (no key stored). Vulkan is fine; GLES3 is not.
-            if (backend != Backend.COMPATIBILITY) {
-                prefs.rendererOverrideStamp = stamp(pack, backend)
-                SessionLog.mark("ProjectSettingsOverride: no renderer_method key, ${backend.name} needs no patch")
-                return true
-            }
-            return false
-        }
-
-        val stored = prefs.renderingMethodOriginal()
-        val original = stored ?: slot.currentValue.takeIf { !isPlaceholder(it) }?.also {
-            prefs.storeRenderingMethodOriginal(it)
-        }
-
-        val desired = when (backend) {
-            Backend.COMPATIBILITY -> placeholderForLength(slot.valueLength)
-            else -> original
-        }?.takeIf { it.length == slot.valueLength } ?: return false
-
-        if (desired != slot.currentValue) {
-            SessionLog.mark("ProjectSettingsOverride: writing renderer method '${desired}' at offset ${slot.valueOffset}")
-            writeString(pack, slot, desired)
-        }
-        prefs.rendererOverrideStamp = stamp(pack, backend)
-        SessionLog.mark("ProjectSettingsOverride: alignment complete in ${SystemClock.elapsedRealtime() - prepareStarted}ms")
-        return true
-    }
-
-    private fun stamp(pack: File, backend: Backend): String =
-        "${backend.name}|${pack.length()}|${pack.lastModified()}"
-
-    private fun isPlaceholder(value: String): Boolean =
-        value == VALUE_PLACEHOLDER_12 || value == VALUE_PLACEHOLDER_6
-
-    private fun placeholderForLength(length: Int): String? = when (length) {
-        12 -> VALUE_PLACEHOLDER_12
-        6 -> VALUE_PLACEHOLDER_6
-        else -> null
-    }
-
-    private fun writeString(pack: File, slot: MethodSlot, value: String) {
-        require(value.length == slot.valueLength) { "Replacement string length mismatch for ${slot.path}" }
-        check(NativeCore.settingsPatch(pack.absolutePath, slot.valueOffset, slot.valueLength, value)) {
-            NativeCore.lastError() ?: "Couldn't patch the renderer setting."
-        }
-    }
-
-    /**
-     * Prefer the cached offset/length so we never re-index a multi-GB pack on later launches.
-     * Falls back to a one-time locate (and then caches the result).
-     */
-    private fun resolveSlot(prefs: RunnerPrefs, pack: File): MethodSlot? {
-        val resolveStarted = SystemClock.elapsedRealtime()
-        val cached = prefs.rendererSlot()
-        if (cached != null) {
-            val current = readStringAt(pack, cached.valueOffset, cached.valueLength) ?: return null
-            SessionLog.mark("ProjectSettingsOverride: cached renderer slot hit (offset=${cached.valueOffset}, len=${cached.valueLength}) in ${SystemClock.elapsedRealtime() - resolveStarted}ms")
-            return MethodSlot(cached.path, cached.valueOffset, cached.valueLength, current)
-        }
-
-        val located = locateMethodSlot(pack) ?: return null
-        prefs.storeRendererSlot(
-            RunnerPrefs.RendererSlot(located.path, located.valueOffset, located.valueLength),
-        )
-        SessionLog.mark("ProjectSettingsOverride: renderer slot located (offset=${located.valueOffset}, len=${located.valueLength}) in ${SystemClock.elapsedRealtime() - resolveStarted}ms")
-        return located
-    }
-
-    private fun readStringAt(pack: File, offset: Long, length: Int): String? = runCatching {
-        val bytes = ByteArray(length)
-        java.io.FileInputStream(pack).use { stream ->
-            stream.channel.position(offset)
-            var done = 0
-            while (done < length) {
-                val read = stream.read(bytes, done, length - done)
-                if (read <= 0) break
-                done += read
-            }
-        }
-        String(bytes, java.nio.charset.StandardCharsets.UTF_8)
-    }.getOrNull()
-
-    /**
-     * Parses `res://project.binary` inside [pack] and locates the rendering_method string
-     * payload. Runs natively ([NativeCore.settingsLocate]); returns null when the pack keeps
-     * the engine default (the key is simply not stored).
-     */
-    private fun locateMethodSlot(pack: File): MethodSlot? {
-        val blob = NativeCore.settingsLocate(pack.absolutePath) ?: return null
-
-        // Blob: [len path, path]; u64 valueOffset; u32 valueLength; [len currentValue, value].
-        val reader = NativeLibrarySet.BlobReader(blob)
-        val path = reader.string()
-        val offset = (reader.int().toLong() and 0xFFFFFFFFL) or (reader.int().toLong() shl 32)
-        val length = reader.int()
-        val current = reader.string()
-        return MethodSlot(path, offset, length, current)
-    }
-}
-
 /**
  * Backs up and restores the game's save file (`user://savegame.res`), which is the only
  * file the game treats as user progress. The staged pack, logs and shader cache are never
@@ -1268,80 +1029,5 @@ class SaveBackup(private val context: Context) {
             onStage("Restoring save", 1f)
             if (written == 0L) 0 else 1
         }
-}
-
-/**
- * Finds and fixes known GDScript API mismatches inside game scripts at install time.
- *
- * Each rule describes an engine function whose argument list the exported game overfills —
- * a parse error on the target Godot build that keeps the script from ever compiling (the
- * `load_threaded_request` 5-argument issue). A call taking more arguments than the rule
- * allows is trimmed back to the documented maximum, keeping the call itself intact; calls
- * that already fit are left byte-for-byte untouched. Every applied fix is reported so the
- * install log shows exactly what changed.
- *
- * Argument splitting respects nested (), [], {}, and "..." / '...' strings so that commas
- * inside nested calls or string literals are not mistaken for arg separators.
- *
- * The matching and rewriting runs natively ([NativeCore.scriptFix]); the Kotlin side parses
- * the result blob back into the typed view below.
- */
-object ScriptPatcher {
-
-    /** A single applied fix, reported for the install log. */
-    data class Fix(val rule: String, val original: String, val patched: String)
-
-    /** Rewrites [source], fixing every known issue. Returns the fixed source plus applied fixes. */
-    fun fix(source: String): Pair<String, List<Fix>> {
-        if (source.isEmpty()) return source to emptyList()
-        val blob = NativeCore.scriptFix(source) ?: return source to emptyList()
-
-        // Blob: u32 fixCount; per fix [len rule, len original, len patched]; [len text, text].
-        val reader = NativeLibrarySet.BlobReader(blob)
-        val fixCount = reader.int()
-        val fixes = ArrayList<Fix>(fixCount)
-        repeat(fixCount) {
-            val rule = reader.string()
-            val original = reader.string()
-            val patched = reader.string()
-            fixes += Fix(rule, original, patched)
-        }
-        val patchedSource = reader.string()
-        return patchedSource to fixes
     }
 
-    /** Backwards-compatible view over [fix]: (original call, patched call) pairs. */
-    fun trimLoadThreadedRequestArgs(source: String): Pair<String, List<Pair<String, String>>> {
-        val (patched, fixes) = fix(source)
-        return patched to fixes.map { it.original to it.patched }
-    }
-}
-
-/**
- * Android-side coordinator for the native shader patch pipeline.
- *
- * All of the GLES3 shader detection, rewriting, caching and override-pack generation lives in
- * C++ inside `libinternal.so` (see `natives/utinternal/src/patch_loader.cpp`) because it needs
- * the engine's own APIs — `DirAccess` over the mounted pack, `FileAccess::get_md5` and
- * `ProjectSettings.load_resource_pack(..., replace_files=true)` for patch priority. That side
- * runs inside the engine process at extension initialization, before any game resource loads.
- *
- * The only thing Kotlin must do is publish the manual backend selection as the marker file the
- * native loader reads (`user://utar_patches/backend.txt`), and clear the native caches when the
- * install is removed. When Forward+/Vulkan is selected the marker simply tells the native loader
- * to keep the original shaders untouched and mount nothing.
- */
-object ShaderPatcher {
-
-    /** Marker path, mirrored by the native loader ("user://utar_patches/backend.txt"). */
-    const val MARKER_FILE = "utar_patches/backend.txt"
-
-    fun prepare(context: Context, backend: Backend) {
-        NativeCore.markerWrite(context.filesDir.absolutePath, backend.nativeMarker)
-    }
-
-    /** Removes the native patch pack and shader caches (used when clearing installs). */
-    fun clear(context: Context) {
-        NativeCore.patcherClear(context.filesDir.absolutePath)
-    }
-}
