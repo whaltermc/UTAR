@@ -953,6 +953,33 @@ class PckPack private constructor(
     /** Extracts font source files and .fontdata from the pack to [dstDir]; returns count or -1. */
     fun extractFontFiles(dstDir: String): Int = NativeCore.extractFontFiles(handle, dstDir)
 
+    /**
+     * Scans pack entries for .ctex texture files with a version too new for Godot 4.1.x
+     * and returns replacement payloads with the version downgraded to 1. Entries with
+     * version <= 1 (or unreadable / non-CTEX data) are skipped.
+     */
+    fun patchCtexEntries(): Map<String, ByteArray> {
+        val replacements = LinkedHashMap<String, ByteArray>()
+        for (entry in entries) {
+            if (!entry.path.endsWith(".ctex", ignoreCase = true)) continue
+            val data = readBytes(entry, 64L * 1024 * 1024)
+            if (data.size < 8) continue
+            // Check magic "CTEX" (little-endian)
+            if (data[0] != 'C'.code.toByte() || data[1] != 'T'.code.toByte() ||
+                data[2] != 'E'.code.toByte() || data[3] != 'X'.code.toByte()) continue
+            // Read version (little-endian u32 at offset 4)
+            val version = (data[4].toInt() and 0xFF) or
+                ((data[5].toInt() and 0xFF) shl 8) or
+                ((data[6].toInt() and 0xFF) shl 16) or
+                ((data[7].toInt() and 0xFF) shl 24)
+            if (version <= 1) continue // Already compatible
+            // Downgrade version to 1
+            data[4] = 1; data[5] = 0; data[6] = 0; data[7] = 0
+            replacements[entry.path] = data.copyOf(data.size)
+        }
+        return replacements
+    }
+
     /** Releases the native handle; further reads fail. Called automatically by the finalizer. */
     override fun close() {
         if (handle != 0L) {
