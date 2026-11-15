@@ -30,6 +30,11 @@ jobs:
           cmake-version: 3.22.1
           build-tools: 34.0.0
 
+      - name: Install NDK 23.2.8568313 (for native GDExtensions)
+        run: |
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null 2>&1 || true
+          $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "ndk;23.2.8568313"
+
       - name: Install dependencies
         run: |
           sudo apt-get update -y

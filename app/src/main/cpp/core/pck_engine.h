@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 namespace utarcore {
@@ -97,6 +98,7 @@ private:
 	uint32_t m_engine_minor = 0;
 	uint32_t m_engine_patch = 0;
 	std::vector<PckEntry> m_entries;
+	std::unordered_map<std::string, int> m_path_index;
 };
 
 } // namespace utarcore

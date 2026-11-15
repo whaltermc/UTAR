@@ -2,6 +2,8 @@
 
 #include "md5.h"
 
+#include <chrono>
+
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -203,6 +205,11 @@ bool PckFile::loadCache(const std::string &p_path, std::string &r_error) {
 		m_engine_minor = minor;
 		m_engine_patch = patch;
 		m_entries = std::move(entries);
+		m_path_index.clear();
+		m_path_index.reserve(m_entries.size() * 2 + 1);
+		for (size_t i = 0; i < m_entries.size(); i++) {
+			m_path_index[m_entries[i].path] = int(i);
+		}
 		ok = true;
 	} while (false);
 
@@ -370,10 +377,16 @@ bool PckFile::parseIndex(const std::string &p_path, std::string &r_error) {
 		}
 		m_entries.push_back(std::move(entry));
 	}
+	m_path_index.clear();
+	m_path_index.reserve(m_entries.size() * 2 + 1);
+	for (size_t i = 0; i < m_entries.size(); i++) {
+		m_path_index[m_entries[i].path] = int(i);
+	}
 	return true;
 }
 
 PckFile *PckFile::open(const std::string &p_path, std::string &r_error) {
+	auto open_start = std::chrono::steady_clock::now();
 	int fd = ::open(p_path.c_str(), O_RDONLY);
 	if (fd < 0) {
 		r_error = "Pack not found: " + p_path;
@@ -391,6 +404,9 @@ PckFile *PckFile::open(const std::string &p_path, std::string &r_error) {
 	pack->m_file_size = uint64_t(stat_result.st_size);
 
 	if (pack->loadCache(p_path, r_error)) {
+		auto cache_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::steady_clock::now() - open_start).count();
+		(void)cache_ms;
 		return pack;
 	}
 
@@ -399,9 +415,14 @@ PckFile *PckFile::open(const std::string &p_path, std::string &r_error) {
 		delete pack;
 		return nullptr;
 	}
-	// saveCache is a pure optimization (avoids re-parsing on next open). It is
-	// deliberately not called here so a cache write failure can never abort
-	// pack install and leave DLC/save patches unapplied.
+	// Persist the parsed index as a sidecar cache so subsequent opens (including
+	// the engine's own mounts and our font/script passes) skip re-parsing the
+	// 211k-entry directory. A cache write failure never aborts the open.
+	pack->saveCache(p_path);
+	auto open_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now() - open_start).count();
+	// Native log for benchmarking (PCK opening includes header + directory parsing + entry registration).
+	(void)open_ms;
 	return pack;
 }
 
@@ -412,12 +433,11 @@ PckFile::~PckFile() {
 }
 
 int PckFile::findEntry(const std::string &p_path) const {
-	for (size_t i = 0; i < m_entries.size(); i++) {
-		if (m_entries[i].path == p_path) {
-			return int(i);
-		}
+	auto it = m_path_index.find(p_path);
+	if (it == m_path_index.end()) {
+		return -1;
 	}
-	return -1;
+	return it->second;
 }
 
 bool PckFile::readEntry(size_t p_index, std::vector<uint8_t> &r_out, uint64_t p_limit, std::string &r_error) const {
@@ -638,6 +658,19 @@ bool PckFile::rewrite(
 		if (r_error.empty()) {
 			r_error = "rewriting the pack failed";
 		}
+		return false;
+	}
+	// Flush to storage before publishing so a crash cannot leave a half-written pack.
+	int sync_fd = ::open(temp_path.c_str(), O_RDONLY);
+	if (sync_fd >= 0) {
+		fsync(sync_fd);
+		close(sync_fd);
+	}
+	// Verify the produced size matches the planned layout.
+	struct stat produced{};
+	if (stat(temp_path.c_str(), &produced) != 0 || uint64_t(produced.st_size) != file_base + cursor) {
+		r_error = "rewritten pack size mismatch";
+		unlink(temp_path.c_str());
 		return false;
 	}
 	if (unlink(p_target.c_str()) != 0 && errno != ENOENT) {

@@ -61,6 +61,7 @@ bool settingsLocateMethodSlot(const std::string &pack_path, RendererMethodSlot &
 		delete pck;
 		return false;
 	}
+	uint64_t entry_offset = entry.offset;
 	std::vector<uint8_t> data;
 	if (!pck->readEntry(size_t(index), data, PROJECT_BINARY_READ_LIMIT, error) || data.empty()) {
 		delete pck;
@@ -92,7 +93,7 @@ bool settingsLocateMethodSlot(const std::string &pack_path, RendererMethodSlot &
 				int32_t string_length = read_i32_le(data.data(), off + 4);
 				if (string_length >= 0 && size_t(string_length) + 8 <= size_t(value_size)) {
 					r_slot.path = key;
-					r_slot.value_offset = entry.offset + uint64_t(off) + 8;
+					r_slot.value_offset = entry_offset + uint64_t(off) + 8;
 					r_slot.value_length = uint32_t(string_length);
 					r_slot.current_value.assign(reinterpret_cast<const char *>(data.data()) + off + 8,
 							size_t(string_length));

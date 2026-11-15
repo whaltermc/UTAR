@@ -13,7 +13,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.utar.runner.GameActivity
 import com.utar.runner.core.GameInstaller
-import com.utar.runner.core.PackWarmup
 import com.utar.runner.core.PckPack
 import com.utar.runner.core.ProjectSettingsOverride
 import com.utar.runner.core.SaveBackup
@@ -222,34 +221,46 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
             // Extract font source files so Godot can open them with a real file descriptor.
             // Without this, Godot's !fd error breaks text rendering in 3D scenes (blackscreen).
-            runCatching {
-                DebugLog.timing("Font extraction: begins")
-                val fontsDir = File(context.filesDir, "fonts").apply { mkdirs() }
-                PckPack.open(staged).use { pack ->
-                    val extracted = pack.extractFontFiles(fontsDir.absolutePath)
-                    SessionLog.i("Extracted $extracted font file(s) to ${fontsDir.path}")
-                }
-                // Patch .fontdata files to reference user://fonts/
-                fontsDir.walk().filter { it.name.endsWith(".fontdata", ignoreCase = true) }.forEach { fontDataFile ->
-                    runCatching {
-                        val content = fontDataFile.readText()
-                        val sourceRegex = Regex("""source\s*=\s*"([^"]+)"""")
-                        val patchedContent = sourceRegex.replace(content) { match ->
-                            val originalPath = match.groupValues[1]
-                            val fileName = originalPath.substringAfterLast('/').substringAfterLast('\\')
-                            """source = "user://fonts/$fileName""""
-                        }
-                        if (patchedContent != content) {
-                            fontDataFile.writeText(patchedContent)
-                            SessionLog.i("Patched font data: ${fontDataFile.name}")
-                        }
-                    }.onFailure {
-                        SessionLog.w("Couldn't patch ${fontDataFile.name}: ${it.message}")
+            // Opening the pack to find fonts is expensive, so only do it when the staged pack
+            // changed; the fonts directory is reused on every later launch.
+            val fontsDir = File(context.filesDir, "fonts")
+            val fontStamp = "${staged.length()}|${staged.lastModified()}"
+            val fontsReady = prefs.fontStamp() == fontStamp &&
+                fontsDir.isDirectory &&
+                !fontsDir.listFiles().isNullOrEmpty()
+            if (fontsReady) {
+                DebugLog.timing("Font extraction: skipped (already extracted for this pack)")
+            } else {
+                runCatching {
+                    DebugLog.timing("Font extraction: begins")
+                    fontsDir.mkdirs()
+                    PckPack.open(staged).use { pack ->
+                        val extracted = pack.extractFontFiles(fontsDir.absolutePath)
+                        SessionLog.i("Extracted $extracted font file(s) to ${fontsDir.path}")
                     }
+                    // Patch .fontdata files to reference user://fonts/
+                    fontsDir.walk().filter { it.name.endsWith(".fontdata", ignoreCase = true) }.forEach { fontDataFile ->
+                        runCatching {
+                            val content = fontDataFile.readText()
+                            val sourceRegex = Regex("""source\s*=\s*"([^"]+)"""")
+                            val patchedContent = sourceRegex.replace(content) { match ->
+                                val originalPath = match.groupValues[1]
+                                val fileName = originalPath.substringAfterLast('/').substringAfterLast('\\')
+                                """source = "user://fonts/$fileName""""
+                            }
+                            if (patchedContent != content) {
+                                fontDataFile.writeText(patchedContent)
+                                SessionLog.i("Patched font data: ${fontDataFile.name}")
+                            }
+                        }.onFailure {
+                            SessionLog.w("Couldn't patch ${fontDataFile.name}: ${it.message}")
+                        }
+                    }
+                    prefs.storeFontStamp(fontStamp)
+                    DebugLog.timing("Font extraction: finished")
+                }.onFailure {
+                    SessionLog.w("Font extraction failed: ${it.message}")
                 }
-                DebugLog.timing("Font extraction: finished")
-            }.onFailure {
-                SessionLog.w("Font extraction failed: ${it.message}")
             }
 
             DebugLog.timing("Renderer alignment: begins")
@@ -273,10 +284,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            DebugLog.timing("Page-cache warmup: begins")
-            val warmStarted = SystemClock.elapsedRealtime()
-            withContext(Dispatchers.IO) { PackWarmup.warm(staged) }
-            DebugLog.timing("Page-cache warmup: finished in ${SystemClock.elapsedRealtime() - warmStarted}ms")
+            // No full-pack page-cache warmup: reading 3+ GB before the engine starts only
+            // delays the first frame and can trip the platform watchdog. The compact index
+            // is mmap'd on demand, and the engine reads payloads as it loads them.
 
             val ready = CompletableDeferred<Unit>()
             val receiver = object : ResultReceiver(Handler(Looper.getMainLooper())) {

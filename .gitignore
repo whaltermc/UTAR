@@ -18,3 +18,7 @@ runtime/
 *.log
 utar-log-*.txt
 logs/
+
+# custom engine AAR is a build artifact, not source
+app/libs/godot-lib*.aar
+app/src/test/resources/libutarcore.so

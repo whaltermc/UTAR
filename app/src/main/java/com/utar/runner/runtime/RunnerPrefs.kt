@@ -84,6 +84,7 @@ class RunnerPrefs(context: Context) {
             .remove(KEY_STAGED_SIZE)
             .remove(KEY_STAGED_MTIME)
             .remove(KEY_SOURCE_URI)
+            .remove(KEY_FONT_STAMP)
             .apply()
     }
 
@@ -109,6 +110,12 @@ class RunnerPrefs(context: Context) {
 
     fun storeSourceUri(value: String) {
         prefs.edit().putString(KEY_SOURCE_URI, value).apply()
+    }
+
+    fun fontStamp(): String? = prefs.getString(KEY_FONT_STAMP, null)
+
+    fun storeFontStamp(value: String) {
+        prefs.edit().putString(KEY_FONT_STAMP, value).apply()
     }
 
     fun renderingMethodOriginal(): String? = prefs.getString(KEY_RENDERING_METHOD_ORIGINAL, null)
@@ -168,6 +175,7 @@ class RunnerPrefs(context: Context) {
         const val KEY_STAGED_SIZE = "staged_size"
         const val KEY_STAGED_MTIME = "staged_mtime"
         const val KEY_SOURCE_URI = "source_uri"
+    const val KEY_FONT_STAMP = "font_stamp"
         const val KEY_RENDERING_METHOD_ORIGINAL = "rendering_method_original"
         const val KEY_SLOT_PATH = "renderer_slot_path"
         const val KEY_SLOT_OFFSET = "renderer_slot_offset"

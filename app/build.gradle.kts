@@ -78,8 +78,8 @@ tasks.withType<Test>().configureEach {
 }
 
 // Always use the official Godot 4.1.4 export template from Maven. A locally built
-// (custom) engine AAR broke font loading (its TextServer/FreeType path); until that
-// template is rebuilt with font support, the official one is the only supported engine.
+// (custom) engine AAR broke font loading (its TextServer/FreeType path) and reintroduced
+// pack indexing; the official template is the only supported engine.
 dependencies {
     implementation("org.godotengine:godot:4.1.4.stable")
 

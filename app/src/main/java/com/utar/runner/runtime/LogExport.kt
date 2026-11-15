@@ -30,13 +30,9 @@ object LogExport {
                 total += bytes.size
             }
             addSection("report.txt", buildReport(packFile, backend))
-            addSection("session.log", SessionLog.contents())
             addSection("pck-patch.log", PckPatchLog.contents(context))
             addSection("godot-logcat.txt", capturedLogcat(context).orEmpty())
-            addSection("logcat-ring.txt", logcat())
-            addSection("crash-logcat.txt", crashLogcat())
             addSection("godot.log", godotLog(context).orEmpty())
-            addSection("scripts-dump.txt", scriptDump(context).orEmpty())
             writer.flush()
         } ?: throw IllegalStateException("Couldn't open the selected destination.")
         SessionLog.i("Log exported to $target ($total bytes)")

@@ -23,6 +23,7 @@ ABIS="${ABIS:-arm64-v8a}"
 GODOT_CPP_BRANCH="${GODOT_CPP_BRANCH:-4.1}"
 GODOT_CPP_DIR="$ROOT/natives/godot-cpp"
 NDK_VERSION="29.0.14206865"
+NATIVES_NDK_VERSION="23.2.8568313"
 FMOD_DIR="$ROOT/runtime/fmodstudioapi20214android/api"
 if [ -z "${JOBS:-}" ]; then
     cpus="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
@@ -142,7 +143,8 @@ arch_for_abi() {
 for abi in $ABIS; do
     arch="$(arch_for_abi "$abi")"
     say "Building GDExtensions for $abi ($arch)"
-    scons -C "$ROOT/natives" \
+    ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$NATIVES_NDK_VERSION" \
+        scons -C "$ROOT/natives" \
         platform=android target="$TARGET" arch="$arch" -j"$JOBS"
 done
 

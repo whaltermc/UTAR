@@ -253,15 +253,6 @@ class GameInstaller(private val context: Context) {
             PckPatchLog.w("Script dump failed: ${it.message}")
         }
 
-        // Font diagnostics (log only) run natively (heavy I/O + MD5 in JNI).
-        val fontScanStarted = SystemClock.elapsedRealtime()
-        val fontResult = pack.fontScan(MAX_FONT_READ_BYTES)
-        val fontCount = (fontResult ushr 32).toInt()
-        val fontBadCount = (fontResult and 0xFFFFFFFFL).toInt()
-        PckPatchLog.mark(
-            "Install: font diagnostics: $fontCount font(s), $fontBadCount flagged " +
-                "in ${SystemClock.elapsedRealtime() - fontScanStarted}ms",
-        )
 
         val steamEntry = pack.entries.firstOrNull { it.path == STEAM_PLATFORM_SCRIPT }
         if (steamEntry != null && !steamEntry.isEncrypted && steamEntry.size <= MAX_CONFIG_BYTES) {
@@ -688,10 +679,6 @@ object NativeCore {
     /** Copies [srcFd] (consumed) to [dstPath]; returns bytes copied or -1. */
     external fun copyFile(srcFd: Int, dstPath: String, expectedSize: Long, progress: Progress?): Long
 
-    // --- pack warmup ---------------------------------------------------------------------------
-
-    external fun warmup(path: String): Boolean
-
     // --- shader patch marker ----------------------------------------------------------------------
 
     /** Writes `filesDir/utar_patches/backend.txt`; the native loader only mounts patches when it says so. */
@@ -843,33 +830,6 @@ class NativeLibrarySet internal constructor(
             val text = String(data, at, length, Charsets.UTF_8)
             at += length
             return text
-        }
-    }
-}
-
-/**
- * Pre-warms the OS page cache for the staged pack while the launcher's "starting" screen is up,
- * so the engine process starts reading from RAM instead of cold storage. Runs on Dispatchers.IO
- * before the Godot activity is started.
- *
- * The fadvise(SEQUENTIAL + WILLNEED) call and the sequential-read fallback both live natively
- * ([NativeCore.warmup]) — one syscall pair instead of reflection, with the same device
- * coverage (fadvise where available, plain reads everywhere else).
- */
-object PackWarmup {
-
-    fun warm(pack: File) {
-        if (!pack.isFile || pack.length() <= 0L) return
-        val started = SystemClock.elapsedRealtime()
-        try {
-            NativeCore.warmup(pack.absolutePath)
-            DebugLog.timing(
-                "Page-cache warmup: issued for ${pack.length()} bytes " +
-                    "in ${SystemClock.elapsedRealtime() - started}ms",
-            )
-        } catch (error: Throwable) {
-            // Warmup is an optimisation only; never let it block a launch.
-            SessionLog.w("Page-cache warmup skipped: ${error.message}")
         }
     }
 }
