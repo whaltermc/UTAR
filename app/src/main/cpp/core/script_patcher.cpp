@@ -240,9 +240,17 @@ void applyCodeBlockReplacements(std::string &patched, std::vector<ScriptFix> &fi
 		if (pos == std::string::npos) {
 			continue; // already patched or not present
 		}
-		std::string original_block = patched.substr(pos, search_len);
+		size_t replace_start = pos;
+		size_t replace_len = search_len;
+		if (rule.replace_through_close_paren) {
+			int64_t close_idx = findMatchingCloseParen(patched, pos);
+			if (close_idx >= 0) {
+				replace_len = size_t(close_idx) - pos + 1;
+			}
+		}
+		std::string original_block = patched.substr(replace_start, replace_len);
 		fixes.push_back({ rule.reason, original_block, replace });
-		patched.replace(pos, search_len, replace);
+		patched.replace(replace_start, replace_len, replace);
 	}
 }
 

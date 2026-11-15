@@ -28,6 +28,10 @@ struct CodeBlockRule {
 	const char *search;
 	const char *replace;
 	const char *reason;
+	// When true, after matching [search], the replacement extends from [search]
+	// through the matching close parenthesis (found via findMatchingCloseParen),
+	// replacing the whole call expression with [replace].
+	bool replace_through_close_paren = false;
 };
 
 // Godot 4.1.4's Viewport::_camera_3d_remove clears camera_3d without calling
@@ -65,14 +69,25 @@ constexpr CodeBlockRule CODE_BLOCK_RULES[] = {
 		"Scene._cache_visible_shaders: restore viewport camera after freeing temp camera",
 	},
 	{
-		"\t@onready var tween = Threen.new()\n",
-		"\t@onready var tween = null\n",
+		"@onready var tween = Threen.new()\n",
+		"@onready var tween = null\n",
 		"Fader.gd: do not instantiate Threen (broken on Android)",
 	},
 	{
 		"\tadd_child(tween)\n",
 		"",
 		"Fader.gd: do not add null Threen to tree",
+	},
+	{
+		"tween.start()\n",
+		"pass\n",
+		"Fader.gd: no-op tween.start() since Threen is null",
+	},
+	{
+		"tween.interpolate_property(",
+		"pass",
+		"Fader.gd: no-op tween.interpolate_property() since Threen is null",
+		true,
 	},
 	{
 		"func _fade(into: bool, duration: float, delay: float):\n"
