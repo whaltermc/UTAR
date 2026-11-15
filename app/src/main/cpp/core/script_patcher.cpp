@@ -243,10 +243,17 @@ void applyCodeBlockReplacements(std::string &patched, std::vector<ScriptFix> &fi
 		size_t replace_start = pos;
 		size_t replace_len = search_len;
 		if (rule.replace_through_close_paren) {
-			int64_t close_idx = findMatchingCloseParen(patched, pos);
-			if (close_idx >= 0) {
-				replace_len = size_t(close_idx) - pos + 1;
+			// findMatchingCloseParen expects open_idx to point at '(' itself;
+			// find that first, starting from the end of [search].
+			size_t paren_pos = patched.find('(', pos);
+			if (paren_pos == std::string::npos) {
+				continue; // no opening paren; replacing just the prefix would break syntax
 			}
+			int64_t close_idx = findMatchingCloseParen(patched, paren_pos);
+			if (close_idx < 0) {
+				continue; // unbalanced parens; replacing just the prefix would break syntax
+			}
+			replace_len = size_t(close_idx) - pos + 1;
 		}
 		std::string original_block = patched.substr(replace_start, replace_len);
 		fixes.push_back({ rule.reason, original_block, replace });
