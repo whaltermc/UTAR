@@ -240,6 +240,15 @@ void applyCodeBlockReplacements(std::string &patched, std::vector<ScriptFix> &fi
 		if (pos == std::string::npos) {
 			continue; // already patched or not present
 		}
+		// Word-boundary guard: don't match inside a larger identifier (e.g. "_tween.start()"
+		// must not match "tween.start()" producing "_pass"). The char before [pos] must not
+		// be alphanumeric or underscore.
+		if (pos > 0) {
+			char c = patched[pos - 1];
+			if (std::isalnum(c) || c == '_') {
+				continue;
+			}
+		}
 		size_t replace_start = pos;
 		size_t replace_len = search_len;
 		if (rule.replace_through_close_paren) {
