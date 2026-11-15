@@ -74,14 +74,15 @@ class GameActivity : FullScreenGodotApp() {
         SessionLog.mark("GameActivity.onCreate: FMOD java bridge initialized")
         SessionLog.mark("GameActivity.onCreate: Godot setup begins (UI thread blocks until the pack is indexed)")
         val setupStart = SystemClock.elapsedRealtime()
+        // Start capturing Godot engine logcat before super.onCreate() so boot-time engine
+        // output (pack indexing, shader compilation, GDExtension loading) is not lost to the
+        // logcat ring buffer once error spam floods it.
+        GameLogCapture.start(filesDir, android.os.Process.myPid())
         super.onCreate(savedInstanceState)
         val setupMs = SystemClock.elapsedRealtime() - setupStart
         DebugLog.timing("Godot activity start: Godot setup (pack indexed) took ${setupMs}ms")
         SessionLog.mark("GameActivity.onCreate: Godot setup returned (pack indexed) in ${setupMs}ms")
         SessionLog.recordProcessId()
-        // Keep the whole session's engine output on disk; the logcat ring buffer alone
-        // loses boot-time errors once error spam floods it.
-        GameLogCapture.start(filesDir, android.os.Process.myPid())
         MainThreadWatchdog.start(filesDir)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -233,6 +234,7 @@ class GameActivity : FullScreenGodotApp() {
         org.fmod.FMOD.close()
         MainThreadWatchdog.stop()
         GameLogCapture.stop()
+        GameLogCapture.preserveGodotLog(filesDir)
     }
 
     override fun getCommandLine(): List<String> {

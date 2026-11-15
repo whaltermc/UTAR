@@ -149,7 +149,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 val pagePadding = if (twoPane) 20.dp else 16.dp
 
                 val install = { importLauncher.launch(arrayOf("*/*")) }
-                val exportLog = { exportLauncher.launch("utar-log-${System.currentTimeMillis()}.zip") }
+                val exportLog = { exportLauncher.launch("utar-log-${System.currentTimeMillis()}.txt") }
                 val backupSaves = { backupSavesLauncher.launch("utar-saves-${System.currentTimeMillis()}.zip") }
                 val restoreSaves = { restoreSavesLauncher.launch(arrayOf("*/*")) }
                 val launch: () -> Unit = { state.packFile?.let(viewModel::launchGame) }

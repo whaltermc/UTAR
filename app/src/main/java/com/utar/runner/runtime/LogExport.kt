@@ -6,10 +6,9 @@ import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
+import java.io.OutputStreamWriter
 
-/** Assembles runner logs, engine output and pack patch logs into a zip archive. */
+/** Assembles runner logs, engine output and pack patch logs into a text export. */
 object LogExport {
 
     private const val MAX_SECTION_CHARS = 200_000
@@ -22,31 +21,29 @@ object LogExport {
     ): Long = withContext(Dispatchers.IO) {
         var total = 0L
         context.contentResolver.openOutputStream(target, "wt")?.use { raw ->
-            val zip = ZipOutputStream(raw)
-            fun add(name: String, text: String) {
+            val writer = OutputStreamWriter(raw, Charsets.UTF_8)
+            fun addSection(name: String, text: String) {
                 if (text.isBlank()) return
-                val entry = ZipEntry(name)
-                zip.putNextEntry(entry)
-                val bytes = text.toByteArray(Charsets.UTF_8)
-                zip.write(bytes)
-                zip.closeEntry()
+                val section = "================ $name ================\n$text\n\n"
+                val bytes = section.toByteArray(Charsets.UTF_8)
+                writer.write(section)
                 total += bytes.size
             }
-            add("report.txt", buildReport(context, packFile, backend))
-            add("session.log", SessionLog.contents())
-            add("pck-patch.log", PckPatchLog.contents(context))
-            add("godot-logcat.txt", capturedLogcat(context).orEmpty())
-            add("logcat-ring.txt", logcat())
-            add("crash-logcat.txt", crashLogcat())
-            add("godot.log", godotLog(context).orEmpty())
-            add("scripts-dump.txt", scriptDump(context).orEmpty())
-            zip.close()
+            addSection("report.txt", buildReport(packFile, backend))
+            addSection("session.log", SessionLog.contents())
+            addSection("pck-patch.log", PckPatchLog.contents(context))
+            addSection("godot-logcat.txt", capturedLogcat(context).orEmpty())
+            addSection("logcat-ring.txt", logcat())
+            addSection("crash-logcat.txt", crashLogcat())
+            addSection("godot.log", godotLog(context).orEmpty())
+            addSection("scripts-dump.txt", scriptDump(context).orEmpty())
+            writer.flush()
         } ?: throw IllegalStateException("Couldn't open the selected destination.")
         SessionLog.i("Log exported to $target ($total bytes)")
         total
     }
 
-    fun buildReport(context: Context, packFile: File?, backend: Backend): String = buildString {
+    fun buildReport(packFile: File?, backend: Backend): String = buildString {
         appendLine("UTAR · Until Then Android Runner")
         appendLine("Generated: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}")
         appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
@@ -65,7 +62,7 @@ object LogExport {
         File(context.filesDir, "logs/scripts-dump.txt")
             .takeIf { it.isFile }
             ?.let { runCatching { it.readText() }.getOrNull() }
-            ?.takeLast(MAX_SECTION_CHARS)
+            ?.take(MAX_SECTION_CHARS)
 
     private fun logcat(): String {
         val pids = LinkedHashSet<Int>()

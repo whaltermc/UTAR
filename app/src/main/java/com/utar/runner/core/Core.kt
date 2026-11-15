@@ -2,6 +2,7 @@ package com.utar.runner.core
 
 import android.content.Context
 import com.utar.runner.runtime.PckPatchLog
+import com.utar.runner.runtime.GameLogCapture
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -215,16 +216,17 @@ class GameInstaller(private val context: Context) {
         // target engine (e.g. load_threaded_request called with a 5th argument) that keep a
         // script from compiling. Over-argued calls are trimmed to the documented maximum.
         //
-        // Deliberately NOT applied to SceneView.gd: trimming its 5-arg call makes the script
-        // compile for the first time on 4.1.4, activating a per-line scene-art loader that
-        // feeds dialogue text into ResourceLoader.load ("No loader found" spam) and leaves
-        // whole scenes black. UTAP ships that script unpatched (it simply fails to compile)
-        // and the game renders fine through its normal path, so parity wins here.
+        // SceneView.gd (the scene-select page's button script) has the same 5-argument
+        // load_threaded_request call. Left unpatched it fails to compile on 4.1.4, so the buttons never
+        // get their unlock state, thumbnails or click handling and the whole page shows greyed out.
+        // The old note here warned that patching it blacks out scenes, but that described a per-line
+        // scene-art loader that this pack's SceneView.gd does not contain. Set PATCH_SCENE_VIEW to
+        // false to go back to the old behaviour (then re-install the pack).
         val scriptScanStarted = SystemClock.elapsedRealtime()
         var scriptFixCount = 0
         for (entry in pack.entries) {
             if (!entry.path.endsWith(".gd", ignoreCase = true)) continue
-            if (entry.path == SCENE_VIEW_SCRIPT) continue
+            if (entry.path == SCENE_VIEW_SCRIPT && !PATCH_SCENE_VIEW) continue
             if (entry.isEncrypted || entry.size <= 0L || entry.size > MAX_CONFIG_BYTES) continue
             val original = String(pack.readBytes(entry), Charsets.UTF_8)
             val (patchedSource, fixes) = ScriptPatcher.fix(original)
@@ -263,8 +265,16 @@ class GameInstaller(private val context: Context) {
 
         val steamEntry = pack.entries.firstOrNull { it.path == STEAM_PLATFORM_SCRIPT }
         if (steamEntry != null && !steamEntry.isEncrypted && steamEntry.size <= MAX_CONFIG_BYTES) {
-            replacements[STEAM_PLATFORM_SCRIPT] = STEAM_PLATFORM_STUB.toByteArray(Charsets.UTF_8)
-            PckPatchLog.i("SteamPlatform.gd: replaced with stub (Steam GDExtension has no Android build)")
+            // The pack ships the DLC scenes when they are present; with no Steam to ask, report the
+            // DLC as owned in that case (or when the "Force DLC unlock" switch is on).
+            val packHasDlc = pack.entries.any { it.path.startsWith(DLC_SCENE_PREFIX) }
+            val dlcOwned = packHasDlc || prefs.dlcOverride
+            replacements[STEAM_PLATFORM_SCRIPT] = steamPlatformStub(dlcOwned).toByteArray(Charsets.UTF_8)
+            PckPatchLog.i(
+                "SteamPlatform.gd: replaced with stub (Steam GDExtension has no Android build); " +
+                    "DLC reported as ${if (dlcOwned) "owned" else "not owned"} " +
+                    "(pack has DLC scenes: $packHasDlc, override: ${prefs.dlcOverride})",
+            )
         }
 
         val patchedConfigs = plans.count { it.patched }
@@ -290,6 +300,35 @@ class GameInstaller(private val context: Context) {
             addedFiles = result.added.size
         }
 
+        // Extract font source files so Godot can open them with a real file descriptor at runtime.
+        // Without this, Godot's !fd error breaks text rendering in 3D scenes (blackscreen).
+        runCatching {
+            val fontsDir = File(context.filesDir, "fonts").apply { mkdirs() }
+            val extracted = pack.extractFontFiles(fontsDir.absolutePath)
+            PckPatchLog.mark("Install: extracted $extracted font file(s) to ${fontsDir.path}")
+
+            // Patch .fontdata files to reference user://fonts/ so Godot finds the extracted fonts.
+            fontsDir.walk().filter { it.name.endsWith(".fontdata", ignoreCase = true) }.forEach { fontDataFile ->
+                runCatching {
+                    val content = fontDataFile.readText(Charsets.UTF_8)
+                    val sourceRegex = Regex("""source\s*=\s*"([^"]+)"""")
+                    val patchedContent = sourceRegex.replace(content) { match ->
+                        val originalPath = match.groupValues[1]
+                        val fileName = originalPath.substringAfterLast('/').substringAfterLast('\\')
+                        """source = "user://fonts/$fileName""""
+                    }
+                    if (patchedContent != content) {
+                        fontDataFile.writeText(patchedContent, Charsets.UTF_8)
+                        PckPatchLog.i("Patched font data: ${fontDataFile.name}")
+                    }
+                }.onFailure {
+                    PckPatchLog.w("Couldn't patch ${fontDataFile.name}: ${it.message}")
+                }
+            }
+        }.onFailure {
+            PckPatchLog.w("Font extraction failed: ${it.message}")
+        }
+
         // A different pack has its own renderer setting; the remembered original is stale now.
         prefs.resetRendererOverride()
 
@@ -309,6 +348,8 @@ class GameInstaller(private val context: Context) {
         storeSourceUri(uri)
 
         onStage("Finishing up", 0.97f)
+        // Preserve Godot's engine log (godot.log) so it is included in log exports.
+        GameLogCapture.preserveGodotLog(context.filesDir)
         PckPatchLog.i(
             "Install complete: ${target.length()} bytes, $patchedConfigs config(s) rewritten" +
                 if (addedFiles > 0) ", $addedFiles file(s) added" else "",
@@ -370,13 +411,19 @@ class GameInstaller(private val context: Context) {
         private const val COPY_BUFFER = 1 shl 20
 
         private const val STORE_SCRIPT = "res://Store.gd"
+        private const val PATCH_SCENE_VIEW = true
         private const val SCENE_VIEW_SCRIPT = "res://ui/components/Game/SceneView/SceneView.gd"
 
         private const val MAX_FONT_READ_BYTES = 64L * 1024 * 1024
         private const val MAX_SCRIPT_DUMP_CHARS = 80_000
 
         private const val STEAM_PLATFORM_SCRIPT = "res://components/DistPlatform/SteamPlatform.gd"
-        private const val STEAM_PLATFORM_STUB = """
+        private const val DLC_SCENE_PREFIX = "res://scenes/_dlc_rdvt/"
+
+        private fun steamPlatformStub(dlcOwned: Boolean): String =
+            STEAM_PLATFORM_STUB_TEMPLATE.replace("%DLC_OWNED%", if (dlcOwned) "true" else "false")
+
+        private const val STEAM_PLATFORM_STUB_TEMPLATE = """
 extends "DistPlatform.gd"
 
 const DLC_MAP = {
@@ -385,7 +432,7 @@ const DLC_MAP = {
 
 var is_online: bool = false
 var steam_id: int = 0
-var is_owned: bool = false
+var is_owned: bool = %DLC_OWNED%
 
 func setup() -> bool:
     print("Steam not available on Android")
@@ -401,10 +448,15 @@ func install_dlc_handler(f: Callable):
     pass
 
 func get_owned_dlcs():
+    if is_owned:
+        var ids = []
+        for key in DLC_MAP:
+            ids.append(str(DLC_MAP[key]))
+        return ids
     return []
 
 func is_dlc_owned(dlc_id: String):
-    return false
+    return is_owned
 
 func open_uri(uri: String):
     if uri.begins_with("steam://"):
@@ -627,6 +679,9 @@ object NativeCore {
 
     /** Writes logs/scripts-dump.txt for the open pack; returns source count or -1. */
     external fun scriptDump(handle: Long, logsDir: String, maxChars: Int): Int
+
+    /** Extracts font source files and .fontdata from the open pack to [dstDir]; returns count or -1. */
+    external fun extractFontFiles(handle: Long, dstDir: String): Int
 
     // --- file copy ------------------------------------------------------------------------------
 
@@ -923,6 +978,9 @@ class PckPack private constructor(
 
     /** Native script dump writer (heavy I/O) run in JNI. */
     fun scriptDump(logsDir: String, maxChars: Int): Int = NativeCore.scriptDump(handle, logsDir, maxChars)
+
+    /** Extracts font source files and .fontdata from the pack to [dstDir]; returns count or -1. */
+    fun extractFontFiles(dstDir: String): Int = NativeCore.extractFontFiles(handle, dstDir)
 
     /** Releases the native handle; further reads fail. Called automatically by the finalizer. */
     override fun close() {

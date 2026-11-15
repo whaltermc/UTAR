@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cctype>
 #include <cstring>
+#include <map>
 #include <sstream>
 #include <android/log.h>
 
@@ -608,35 +609,42 @@ Java_com_utar_runner_core_NativeCore_scriptDump(JNIEnv *env, jobject, jlong hand
 	std::ostringstream out;
 	out << "=== Script index (" << scripts.size() << " scripts) ===\n";
 	for (size_t i : scripts) out << pck->entry(i).path << " (" << pck->entry(i).size << "B)\n";
-	out << "\n=== Scene index (" << scenes.size() << " scenes) ===\n";
-	for (size_t i : scenes) out << pck->entry(i).path << " (" << pck->entry(i).size << "B)\n";
+	out << "\n=== Scene index (" << scenes.size() << " scenes; per top folder) ===\n";
+	{
+		std::map<std::string, int> perDir;
+		for (size_t i : scenes) {
+			const std::string &sp = pck->entry(i).path;
+			size_t a = sp.find("res://scenes/");
+			std::string key = "(other)";
+			if (a == 0) {
+				size_t b = sp.find('/', 13);
+				key = sp.substr(13, b == std::string::npos ? std::string::npos : b - 13);
+			}
+			perDir[key]++;
+		}
+		for (const auto &kv : perDir) out << kv.first << ": " << kv.second << "\n";
+	}
 	out << "\n=== Sources ===\n";
 
 	int sourceCount = 0;
 	for (size_t i : scripts) {
 		const utarcore::PckEntry &e = pck->entry(i);
 		std::string path = e.path;
-		bool interesting = (path.find("chat") != std::string::npos) ||
-			(path.find("Chat") != std::string::npos) ||
-			(path.find("messenger") != std::string::npos) ||
-			(path.find("Messenger") != std::string::npos) ||
-			(path.find("dialog") != std::string::npos) ||
-			(path.find("Dialog") != std::string::npos) ||
-			(path.find("SceneView") != std::string::npos) ||
-			(path.find("ScreenNavigator") != std::string::npos) ||
-			(path.size() >= 7 && path.compare(path.size()-7, 7, "/Game.gd") == 0);
-		// case-insensitive contains for chat etc not necessary; keep simple contains with tolower? Use lower copy.
-		if (!interesting) {
-			// do case-insensitive check
-			std::string lower = path;
-			for (char &c : lower) c = (char)std::tolower((unsigned char)c);
-			interesting = lower.find("chat") != std::string::npos ||
-				lower.find("messenger") != std::string::npos ||
-				lower.find("dialog") != std::string::npos ||
-				lower.find("sceneview") != std::string::npos ||
-				lower.find("screennavigator") != std::string::npos ||
-				(lower.size() >= 7 && lower.compare(lower.size()-7,7,"/game.gd")==0);
-		}
+		std::string lower = path;
+		for (char &c : lower) c = (char)std::tolower((unsigned char)c);
+		if (lower.compare(0, 13, "res://addons/") == 0) continue;
+		// Save / unlock / DLC / scene-select logic first; chat + dialogue scripts are no longer dumped
+		// because they used up the whole size budget.
+		bool interesting =
+			lower.find("/store.gd") != std::string::npos ||
+			lower.find("savegame") != std::string::npos ||
+			lower.find("save_game") != std::string::npos ||
+			lower.find("distplatform") != std::string::npos ||
+			lower.find("sceneselect") != std::string::npos ||
+			lower.find("/config") != std::string::npos ||
+			lower.find("sceneview") != std::string::npos ||
+			lower.find("screennavigator") != std::string::npos ||
+			(lower.size() >= 7 && lower.compare(lower.size() - 7, 7, "/game.gd") == 0);
 		if (!interesting) continue;
 		std::vector<uint8_t> data;
 		std::string error;
@@ -699,6 +707,62 @@ Java_com_utar_runner_core_NativeCore_copyFile(JNIEnv *env, jobject, jint src_fd,
 	close(owned);
 	if (!ok) return -1;
 	return copied;
+}
+
+// --- font extraction ------------------------------------------------------------------
+
+static bool isFontPath(const std::string &path) {
+	std::string lower = path;
+	for (char &c : lower) c = (char)std::tolower((unsigned char)c);
+	const size_t n = lower.size();
+	return (n >= 4 && lower.compare(n - 4, 4, ".ttf") == 0) ||
+		(n >= 4 && lower.compare(n - 4, 4, ".otf") == 0) ||
+		(n >= 4 && lower.compare(n - 4, 4, ".ttc") == 0) ||
+		(n >= 5 && lower.compare(n - 5, 5, ".woff") == 0) ||
+		(n >= 6 && lower.compare(n - 6, 6, ".woff2") == 0) ||
+		(n >= 9 && lower.compare(n - 9, 9, ".fontdata") == 0);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_utar_runner_core_NativeCore_extractFontFiles(JNIEnv *env, jobject, jlong handle, jstring dstDirStr) {
+	g_lastError.clear();
+	utarcore::PckFile *pck = reinterpret_cast<utarcore::PckFile *>(handle);
+	if (pck == nullptr) {
+		setError("Pack is not open.");
+		return -1;
+	}
+	std::string dstDir = jstringToStd(env, dstDirStr);
+	mkdir(dstDir.c_str(), 0755);
+
+	int count = 0;
+	for (size_t i = 0; i < pck->entryCount(); i++) {
+		const utarcore::PckEntry &e = pck->entry(i);
+		if (e.isEncrypted()) continue;
+		if (!isFontPath(e.path)) continue;
+
+		std::vector<uint8_t> data;
+		std::string error;
+		if (!pck->readEntry(i, data, 64L * 1024 * 1024, error)) continue;
+
+		// Strip "res://" prefix, build destination path under dstDir.
+		std::string outPath = e.path;
+		if (outPath.compare(0, 6, "res://") == 0) outPath = outPath.substr(6);
+		std::string fullPath = dstDir + "/" + outPath;
+
+		// Create parent directories.
+		size_t lastSlash = fullPath.find_last_of('/');
+		if (lastSlash != std::string::npos) {
+			std::string parent = fullPath.substr(0, lastSlash);
+			mkdir(parent.c_str(), 0755);
+		}
+
+		std::ofstream f(fullPath, std::ios::binary | std::ios::trunc);
+		if (!f) continue;
+		f.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
+		f.close();
+		count++;
+	}
+	return count;
 }
 
 } // extern "C"

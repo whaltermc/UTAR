@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import com.utar.runner.GameActivity
 import com.utar.runner.core.GameInstaller
 import com.utar.runner.core.PackWarmup
+import com.utar.runner.core.PckPack
 import com.utar.runner.core.ProjectSettingsOverride
 import com.utar.runner.core.SaveBackup
 import com.utar.runner.core.ShaderPatcher
@@ -217,6 +218,38 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(launching = false, stage = "", error = error.message ?: "Staging failed.")
                 }
                 return@launch
+            }
+
+            // Extract font source files so Godot can open them with a real file descriptor.
+            // Without this, Godot's !fd error breaks text rendering in 3D scenes (blackscreen).
+            runCatching {
+                DebugLog.timing("Font extraction: begins")
+                val fontsDir = File(context.filesDir, "fonts").apply { mkdirs() }
+                PckPack.open(staged).use { pack ->
+                    val extracted = pack.extractFontFiles(fontsDir.absolutePath)
+                    SessionLog.i("Extracted $extracted font file(s) to ${fontsDir.path}")
+                }
+                // Patch .fontdata files to reference user://fonts/
+                fontsDir.walk().filter { it.name.endsWith(".fontdata", ignoreCase = true) }.forEach { fontDataFile ->
+                    runCatching {
+                        val content = fontDataFile.readText()
+                        val sourceRegex = Regex("""source\s*=\s*"([^"]+)"""")
+                        val patchedContent = sourceRegex.replace(content) { match ->
+                            val originalPath = match.groupValues[1]
+                            val fileName = originalPath.substringAfterLast('/').substringAfterLast('\\')
+                            """source = "user://fonts/$fileName""""
+                        }
+                        if (patchedContent != content) {
+                            fontDataFile.writeText(patchedContent)
+                            SessionLog.i("Patched font data: ${fontDataFile.name}")
+                        }
+                    }.onFailure {
+                        SessionLog.w("Couldn't patch ${fontDataFile.name}: ${it.message}")
+                    }
+                }
+                DebugLog.timing("Font extraction: finished")
+            }.onFailure {
+                SessionLog.w("Font extraction failed: ${it.message}")
             }
 
             DebugLog.timing("Renderer alignment: begins")

@@ -20,7 +20,7 @@ class ScriptPatcherTest {
             changes[0].second,
         )
         assertEquals(
-            "var r = load_threaded_request(\"res://a.tscn\", null, true, 0)",
+            "var r = ResourceLoader.load_threaded_request(\"res://a.tscn\", null, true, 0)",
             patched,
         )
     }

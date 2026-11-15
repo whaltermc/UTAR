@@ -40,10 +40,6 @@ std::string lowercase(const std::string &value) {
 	return out;
 }
 
-bool isIdentifierChar(char c) {
-	return std::isalnum(unsigned(c)) || c == '_';
-}
-
 /** Case-insensitive indexOf over the pre-lowercased source, starting at from. */
 int64_t indexOfIgnoreCase(const std::string &source_lower, size_t from, const std::string &needle_lower) {
 	if (needle_lower.empty() || source_lower.size() < needle_lower.size() || from > source_lower.size() - needle_lower.size()) {
@@ -304,19 +300,9 @@ ScriptFixResult scriptFix(const std::string &source) {
 		if (int(args.size()) <= rule.max_args) {
 			patched.append(source, size_t(best_idx), size_t(close_idx) + 1 - size_t(best_idx));
 		} else {
-			// Trimmed calls drop a `Foo.` receiver: the bare singleton call resolves
-			// identically, and the recorded call text starts at the function name.
-			size_t call_start = size_t(best_idx);
-			size_t scan = size_t(best_idx);
-			if (scan > i && source[scan - 1] == '.') {
-				scan--;
-				while (scan > i && isIdentifierChar(source[scan - 1])) {
-					scan--;
-				}
-				call_start = scan;
-			}
-			patched.resize(patched.size() - (size_t(best_idx) - call_start));
-
+			// Keep any `Foo.` receiver already copied into `patched`: a bare call to a singleton method
+			// (e.g. load_threaded_request without ResourceLoader.) is not valid GDScript. The recorded
+			// call text starts at the function name.
 			std::string original_call = source.substr(size_t(best_idx), size_t(close_idx) + 1 - size_t(best_idx));
 			std::vector<std::string> kept_args;
 			kept_args.reserve(std::min(size_t(rule.max_args), args.size()));
