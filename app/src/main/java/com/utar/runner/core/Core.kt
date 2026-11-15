@@ -221,6 +221,30 @@ class GameInstaller(private val context: Context) {
         }
 
 
+        // Fix Scene._cache_visible_shaders viewport camera issue (engine bug on 4.1.4).
+        // Only Scene.gd contains this pattern; all other scripts pass through unchanged.
+        val scriptScanStarted = SystemClock.elapsedRealtime()
+        var scriptFixCount = 0
+        for (entry in pack.entries) {
+            if (!entry.path.endsWith(".gd", ignoreCase = true)) continue
+            if (entry.isEncrypted || entry.size <= 0L || entry.size > MAX_CONFIG_BYTES) continue
+            val original = String(pack.readBytes(entry), Charsets.UTF_8)
+            if (!original.contains("_cache_visible_shaders")) continue
+            val (patchedSource, fixes) = ScriptPatcher.fix(original)
+            if (fixes.isEmpty()) continue
+            replacements[entry.path] = patchedSource.toByteArray(Charsets.UTF_8)
+            scriptFixCount += fixes.size
+            for (fix in fixes) {
+                PckPatchLog.i(
+                    "Script ${entry.path}: ${fix.rule}: '${fix.original}' -> '${fix.patched}'",
+                )
+            }
+        }
+        PckPatchLog.mark(
+            "Install: script fix applied to $scriptFixCount call(s) " +
+                "in ${SystemClock.elapsedRealtime() - scriptScanStarted}ms",
+        )
+
         val steamEntry = pack.entries.firstOrNull { it.path == STEAM_PLATFORM_SCRIPT }
         if (steamEntry != null && !steamEntry.isEncrypted && steamEntry.size <= MAX_CONFIG_BYTES) {
             // The pack ships the DLC scenes when they are present; with no Steam to ask, report the
@@ -588,6 +612,11 @@ object NativeCore {
 
     /** GdextPlan blob for [original]; never null (unmatched configs return status 0). */
     external fun gdextPlan(configPath: String, original: String, libraryBlob: ByteArray): ByteArray?
+
+    // --- script patching ----------------------------------------------------------------
+
+    /** ScriptFixResult blob; null on internal failure (callers keep the source untouched). */
+    external fun scriptFix(source: String): ByteArray?
 
     // --- save backup ------------------------------------------------------------------------
 
@@ -975,6 +1004,34 @@ class PckPack private constructor(
  * The location of the string (offset + length) is cached in prefs after the first locate, so later
  * launches never open or index the pack just to flip a few bytes.
  */
+/**
+ * Finds and fixes the Scene._cache_visible_shaders viewport camera issue.
+ * Godot 4.1.4's Viewport::_camera_3d_remove clears camera_3d without calling
+ * make_next_current. Scene._cache_visible_shaders() steals the viewport camera
+ * and then frees it, leaving the viewport with no camera → black screen.
+ */
+object ScriptPatcher {
+
+    data class Fix(val rule: String, val original: String, val patched: String)
+
+    fun fix(source: String): Pair<String, List<Fix>> {
+        if (source.isEmpty()) return source to emptyList()
+        val blob = NativeCore.scriptFix(source) ?: return source to emptyList()
+
+        val reader = NativeLibrarySet.BlobReader(blob)
+        val fixCount = reader.int()
+        val fixes = ArrayList<Fix>(fixCount)
+        repeat(fixCount) {
+            val rule = reader.string()
+            val original = reader.string()
+            val patched = reader.string()
+            fixes += Fix(rule, original, patched)
+        }
+        val patchedSource = reader.string()
+        return patchedSource to fixes
+    }
+}
+
 /**
  * Backs up and restores the game's save file (`user://savegame.res`), which is the only
  * file the game treats as user progress. The staged pack, logs and shader cache are never

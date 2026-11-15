@@ -17,6 +17,7 @@ InterpolatedCamera3D::~InterpolatedCamera3D() {
 void InterpolatedCamera3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
+			Camera3D::_notification(p_what);
 			_update_process_mode();
 		} break;
 

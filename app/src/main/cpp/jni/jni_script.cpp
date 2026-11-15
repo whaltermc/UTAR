@@ -1,5 +1,6 @@
 #include "jni_common.h"
 #include "pck_engine.h"
+#include "script_patcher.h"
 
 #include <algorithm>
 #include <fstream>
@@ -10,6 +11,15 @@
 #include <fcntl.h>
 
 extern "C" {
+
+// --- script patching --------------------------------------------------------------
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_utar_runner_core_NativeCore_scriptFix(JNIEnv *env, jobject, jstring source) {
+	g_lastError.clear();
+	utarcore::ScriptFixResult result = utarcore::scriptFix(jstringToStd(env, source));
+	return vectorToJByteArray(env, result.toBlob());
+}
 
 // --- script dump ----------------------------------------------------------------
 
