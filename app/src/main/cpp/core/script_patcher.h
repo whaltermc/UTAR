@@ -65,6 +65,7 @@ constexpr CodeBlockRule CODE_BLOCK_RULES[] = {
 		"\tawait Utils.wait_frames(2)\n"
 		"\tcamera.queue_free()\n"
 		"\tif prev_camera:\n"
+		"\t\tprev_camera.current = false\n"
 		"\t\tprev_camera.current = true\n",
 		"Scene._cache_visible_shaders: restore viewport camera after freeing temp camera",
 	},
