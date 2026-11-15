@@ -230,6 +230,22 @@ std::vector<std::string> splitTopLevelArgs(const std::string &args) {
 	return result;
 }
 
+/** Applies exact source-code block replacements to [patched], recording each in [fixes]. */
+void applyCodeBlockReplacements(std::string &patched, std::vector<ScriptFix> &fixes) {
+	for (const CodeBlockRule &rule : CODE_BLOCK_RULES) {
+		const char *search = rule.search;
+		const char *replace = rule.replace;
+		size_t search_len = std::strlen(search);
+		size_t pos = patched.find(search);
+		if (pos == std::string::npos) {
+			continue; // already patched or not present
+		}
+		std::string original_block = patched.substr(pos, search_len);
+		fixes.push_back({ rule.reason, original_block, replace });
+		patched.replace(pos, search_len, replace);
+	}
+}
+
 } // namespace
 
 std::vector<uint8_t> ScriptFixResult::toBlob() const {
@@ -327,6 +343,7 @@ ScriptFixResult scriptFix(const std::string &source) {
 		}
 		i = size_t(close_idx) + 1;
 	}
+	applyCodeBlockReplacements(patched, result.fixes);
 	result.source = std::move(patched);
 	return result;
 }

@@ -212,11 +212,28 @@ Java_com_utar_runner_core_NativeCore_extractFontFiles(JNIEnv *env, jobject, jlon
 		if (outPath.compare(0, 6, "res://") == 0) outPath = outPath.substr(6);
 		std::string fullPath = dstDir + "/" + outPath;
 
-		// Create parent directories.
-		size_t lastSlash = fullPath.find_last_of('/');
-		if (lastSlash != std::string::npos) {
-			std::string parent = fullPath.substr(0, lastSlash);
-			mkdir(parent.c_str(), 0755);
+		// Create all parent directories (single-level mkdir() misses nested paths such as
+		// fonts/.godot/imported/*.fontdata, which left every font unextracted on device).
+		auto mkdir_p = [](const std::string &path) {
+			std::string acc;
+			for (size_t i = 0; i <= path.size(); i++) {
+				if (i == path.size() || path[i] == '/') {
+					if (!acc.empty() && acc != "/") {
+						::mkdir(acc.c_str(), 0755);
+					}
+					if (i < path.size()) {
+						acc += path[i];
+					}
+				} else {
+					acc += path[i];
+				}
+			}
+		};
+		{
+			size_t lastSlash = fullPath.find_last_of('/');
+			if (lastSlash != std::string::npos) {
+				mkdir_p(fullPath.substr(0, lastSlash));
+			}
 		}
 
 		std::ofstream f(fullPath, std::ios::binary | std::ios::trunc);
