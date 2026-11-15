@@ -271,6 +271,14 @@ class GameInstaller(private val context: Context) {
         val patchedConfigs = plans.count { it.patched }
 
         onStage("Patching Android extensions", 0.68f)
+
+        // Patch .ctex texture files with version too new for Godot 4.1.x
+        val ctexReplacements = pack.patchCtexEntries()
+        if (ctexReplacements.isNotEmpty()) {
+            replacements.putAll(ctexReplacements)
+            PckPatchLog.i("Patched ${ctexReplacements.size} .ctex file(s) for Godot 4.1.x compatibility")
+        }
+
         var addedFiles = 0
         if (replacements.isEmpty() && additions.isEmpty()) {
             if (target.exists()) target.delete()

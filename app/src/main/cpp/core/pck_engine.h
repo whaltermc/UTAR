@@ -56,9 +56,16 @@ public:
 	bool readEntry(size_t p_index, std::vector<uint8_t> &r_out, uint64_t p_limit, std::string &r_error) const;
 
 	/**
+	 * Scans all pack entries for .ctex files with a version > 1 (too new for Godot 4.1.x)
+	 * and returns replacement payloads with the version downgraded to 1. Callers should
+	 * add these to their replacements map before calling rewrite().
+	 */
+	std::vector<std::pair<std::string, std::vector<uint8_t>>> patchCtexEntries();
+
+	/**
 	 * Streams a copy of this pack to [p_target], replacing the payloads named in
-	 * [p_replacements] and appending the files in [p_additions] the pack does not already
-	 * contain (callers merge additions that collide with existing paths first). Untouched
+		[p_replacements] and appending the files in [p_additions] the pack does not already
+		contain (callers merge additions that collide with existing paths first). Untouched
 	 * payloads are copied byte for byte with their recorded MD5; rewritten/added payloads
 	 * get freshly computed MD5s.
 	 *

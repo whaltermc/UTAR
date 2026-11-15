@@ -53,19 +53,51 @@ constexpr CodeBlockRule CODE_BLOCK_RULES[] = {
         "\n"
         "\tawait Utils.wait_frames(2)\n"
         "\tcamera.queue_free()\n"
-        "\\t# Ensure viewport camera — InterpolatedCamera3D does not call make_current()\\n"
-        "\\t# on enter_tree, so no camera may be set. Find one explicitly.\\n"
-        "\\tvar vp = get_viewport()\\n"
-        "\\tif vp.get_camera_3d() == null:\\n"
-        "\\t\\tvar stack = [get_tree().get_root()]\\n"
-        "\\t\\twhile stack.size() > 0:\\n"
-        "\\t\\t\\tvar node = stack.pop_front()\\n"
-        "\\t\\t\\tif node is Camera3D:\\n"
-        "\\t\\t\\t\\tnode.current = true\\n"
-        "\\t\\t\\t\\tbreak\\n"
-        "\\t\\t\\tfor child in node.get_children():\\n"
-        "\\t\\t\\t\\tstack.push_back(child)\\n"
+        "\t# Ensure viewport camera — InterpolatedCamera3D does not call make_current()\n"
+        "\t# on enter_tree, so no camera may be set. Find one explicitly.\n"
+        "\tvar vp = get_viewport()\n"
+        "\tif vp.get_camera_3d() == null:\n"
+        "\t\tvar stack = [get_tree().get_root()]\n"
+        "\t\twhile stack.size() > 0:\n"
+        "\t\t\tvar node = stack.pop_front()\n"
+        "\t\t\tif node is Camera3D:\n"
+        "\t\t\t\tnode.current = true\n"
+        "\t\t\t\tbreak\n"
+        "\t\t\tfor child in node.get_children():\n"
+        "\t\t\t\tstack.push_back(child)\n"
 	},
+    {
+        "@onready var tween = Threen.new()",
+        "@onready var tween = null",
+        "Fader.gd: do not instantiate Threen (tween never completes on Android)",
+    },
+    {
+        "\tadd_child(tween)\n\tfocus.focus_name = \"Fader\"",
+        "\tfocus.focus_name = \"Fader\"",
+        "Fader.gd: do not add null tween to scene tree",
+    },
+    {
+        "func _fade(into: bool, duration: float, delay: float):\n"
+        "\tvar modulate = Color(0, 0, 0, 0) if into else Color.BLACK\n"
+        "\n"
+        "\tif delay > 0:\n"
+        "\t\tawait Utils.wait(delay)\n"
+        "\n"
+        "\ttween.interpolate_property(fader, \"modulate\", fader.modulate, modulate, duration)\n"
+        "\ttween.start()\n"
+        "\tawait tween.tween_completed",
+        "func _fade(into: bool, duration: float, delay: float):\n"
+        "\tvar modulate = Color(0, 0, 0, 0) if into else Color.BLACK\n"
+        "\n"
+        "\tif delay > 0:\n"
+        "\t\tawait Utils.wait(delay)\n"
+        "\n"
+        "\tvar _t = create_tween()\n"
+        "\t_t.tween_property(fader, \"modulate\", modulate, duration)\n"
+        "\t_t.start()\n"
+        "\tawait _t.tween_completed",
+        "Fader.gd: use Godot built-in Tween instead of Threen",
+    },
 };
 
 } // namespace
