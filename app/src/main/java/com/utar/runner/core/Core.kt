@@ -586,6 +586,9 @@ object NativeCore {
     /** Last error message from the native side, or null when the previous call succeeded. */
     external fun lastError(): String?
 
+    /** Sets an environment variable in the current process (used for Vulkan driver selection). */
+    external fun setEnv(name: String, value: String): Boolean
+
     // --- PCK engine ---------------------------------------------------------------
 
     /** Opens a pack. Returns a native handle (0 on failure), owned until [pckClose]. */

@@ -18,6 +18,7 @@ import com.utar.runner.core.ProjectSettingsOverride
 import com.utar.runner.core.SaveBackup
 import com.utar.runner.core.ShaderPatcher
 import com.utar.runner.runtime.Backend
+import com.utar.runner.runtime.VulkanDriver
 import com.utar.runner.runtime.DebugLog
 import com.utar.runner.runtime.LogExport
 import com.utar.runner.runtime.RunnerPrefs
@@ -37,6 +38,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     data class UiState(
         val backend: Backend = Backend.FORWARD_PLUS,
+    val vulkanDriver: VulkanDriver = VulkanDriver.SYSTEM,
+    val vulkanDriverPath: String = "",
         val packFile: File? = null,
         val packName: String = "",
         val packBytes: Long = 0L,
@@ -69,6 +72,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
             _state.value = UiState(
                 backend = prefs.backend,
+                vulkanDriver = VulkanDriver.fromName(prefs.vulkanDriver),
+                vulkanDriverPath = prefs.vulkanDriverPath.orEmpty(),
                 packFile = file,
                 packName = record?.fileName ?: file?.name.orEmpty(),
                 packBytes = file?.length() ?: 0L,
@@ -81,6 +86,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun selectBackend(backend: Backend) {
         prefs.backend = backend
         _state.update { it.copy(backend = backend) }
+    }
+
+    fun selectVulkanDriver(driver: VulkanDriver, path: String? = null) {
+        prefs.vulkanDriver = driver.name
+        if (path != null) prefs.vulkanDriverPath = path
+        _state.update { it.copy(vulkanDriver = driver, vulkanDriverPath = path ?: it.vulkanDriverPath) }
     }
 
     fun toggleDlcOverride(enabled: Boolean) {

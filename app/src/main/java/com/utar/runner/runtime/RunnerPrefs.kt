@@ -56,6 +56,18 @@ class RunnerPrefs(context: Context) {
             prefs.edit().putBoolean(KEY_DLC_OVERRIDE, value).apply()
         }
 
+    var vulkanDriver: String
+        get() = prefs.getString(KEY_VULKAN_DRIVER, VulkanDriver.SYSTEM.name) ?: VulkanDriver.SYSTEM.name
+        set(value) {
+            prefs.edit().putString(KEY_VULKAN_DRIVER, value).apply()
+        }
+
+    var vulkanDriverPath: String?
+        get() = prefs.getString(KEY_VULKAN_DRIVER_PATH, null)
+        set(value) {
+            prefs.edit().putString(KEY_VULKAN_DRIVER_PATH, value).apply()
+        }
+
     fun recordInstall(record: InstallRecord) {
         prefs.edit()
             .putString(KEY_INSTALL_NAME, record.fileName)
@@ -184,6 +196,8 @@ class RunnerPrefs(context: Context) {
         const val KEY_USE_DYNAMIC_COLOR = "use_dynamic_color"
         const val KEY_ACCENT_COLOR = "accent_color"
         const val KEY_DLC_OVERRIDE = "dlc_override"
+        const val KEY_VULKAN_DRIVER = "vulkan_driver"
+        const val KEY_VULKAN_DRIVER_PATH = "vulkan_driver_path"
         const val DEFAULT_ACCENT_COLOR = 0xFFE9C7A3.toInt()
     }
 }

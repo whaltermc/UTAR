@@ -21,6 +21,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.content.IntentCompat
 import com.utar.runner.runtime.Backend
+import com.utar.runner.runtime.VulkanDriver
+import com.utar.runner.runtime.RunnerPrefs
+import com.utar.runner.core.NativeCore
 import com.utar.runner.runtime.DebugLog
 import com.utar.runner.runtime.GameLogCapture
 import com.utar.runner.runtime.MainThreadWatchdog
@@ -63,6 +66,15 @@ class GameActivity : FullScreenGodotApp() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         createdAt = SystemClock.elapsedRealtime()
+        val runnerPrefs = RunnerPrefs(this)
+        when (VulkanDriver.fromName(runnerPrefs.vulkanDriver)) {
+            VulkanDriver.PANVK -> NativeCore.setEnv("MESA_VK_DEVICE_SELECT", "panvk")
+            VulkanDriver.TURNIP -> NativeCore.setEnv("MESA_VK_DEVICE_SELECT", "turnip")
+            VulkanDriver.CUSTOM -> runnerPrefs.vulkanDriverPath?.takeIf { it.isNotBlank() }?.let {
+                NativeCore.setEnv("VK_ICD_FILENAMES", it)
+            }
+            VulkanDriver.SYSTEM -> Unit
+        }
         DebugLog.timing("Godot activity start: GameActivity.onCreate")
         SessionLog.mark("GameActivity.onCreate: start")
         // FMOD's Android runtime needs its Java bridge (org.fmod.FMOD.init) before any

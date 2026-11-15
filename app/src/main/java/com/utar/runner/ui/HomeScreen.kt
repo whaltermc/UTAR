@@ -56,6 +56,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -90,6 +92,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.utar.runner.runtime.Backend
+import com.utar.runner.runtime.VulkanDriver
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -191,7 +194,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                                 )
                             }
                             Reveal(index = 2) {
-                                GraphicsCard(state, onSelectBackend = viewModel::selectBackend)
+                                GraphicsCard(state, onSelectBackend = viewModel::selectBackend, onSelectVulkanDriver = viewModel::selectVulkanDriver)
                             }
                             Reveal(index = 3) {
                                 AppearanceCard(
@@ -224,7 +227,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             )
                         }
                         Reveal(index = 2) {
-                            GraphicsCard(state, onSelectBackend = viewModel::selectBackend)
+                            GraphicsCard(state, onSelectBackend = viewModel::selectBackend, onSelectVulkanDriver = viewModel::selectVulkanDriver)
                         }
                         Reveal(index = 3) {
                             AppearanceCard(
@@ -544,6 +547,7 @@ private fun PackageCard(
 private fun GraphicsCard(
     state: HomeViewModel.UiState,
     onSelectBackend: (Backend) -> Unit,
+    onSelectVulkanDriver: (VulkanDriver, String?) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     ExpressiveCard {
@@ -573,6 +577,27 @@ private fun GraphicsCard(
             color = scheme.onSurfaceVariant,
         )
         CodePill(text = state.backend.engineArgs.joinToString(" ").ifEmpty { "engine defaults" })
+        if (state.backend == Backend.FORWARD_PLUS) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(text = "Vulkan driver", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                VulkanDriver.entries.forEach { driver ->
+                    FilterChip(
+                        selected = state.vulkanDriver == driver,
+                        onClick = { onSelectVulkanDriver(driver, null) },
+                        label = { Text(driver.label) },
+                    )
+                }
+            }
+            if (state.vulkanDriver == VulkanDriver.CUSTOM) {
+                OutlinedTextField(
+                    value = state.vulkanDriverPath,
+                    onValueChange = { onSelectVulkanDriver(VulkanDriver.CUSTOM, it) },
+                    label = { Text("Driver path") },
+                    singleLine = true,
+                )
+            }
+        }
     }
 }
 

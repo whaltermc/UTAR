@@ -16,7 +16,6 @@ Android runner for the *Until Then* Godot 4.1.4 game pack. Kotlin + Compose UI, 
 - `app/src/main/java/com/utar/runner/core/Core.kt` — GameInstaller, PckPack, NativeCore JNI decls
 - `app/src/main/cpp/` — native core: pck_engine, library_set, gdext_rewriter, script_patcher, settings_override, save_zip, jni_bridge
 - `natives/` — GDExtension sources (threen, inkcpp, utinternal, fmod-for-godot, utap_shims)
-- `engine/core/runtime/utar_runtime.h` — capability flags
 
 ## Conventions
 - Kotlin official style; no comments unless asked.

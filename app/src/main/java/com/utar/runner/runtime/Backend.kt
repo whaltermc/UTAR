@@ -18,8 +18,9 @@ enum class Backend(
         label = "Forward+ (Vulkan)",
         summary = "Vulkan Forward+/Mobile renderer with the game's original shaders.",
         engineArgs = listOf(
-            "--rendering-method", "mobile", "--rendering-driver", "vulkan",
+            "--rendering-method", "forward_plus", "--rendering-driver", "vulkan",
             "--use_immersive",
+            "--verbose",
         ),
     ),
     COMPATIBILITY(
@@ -28,6 +29,7 @@ enum class Backend(
         engineArgs = listOf(
             "--rendering-method", "gl_compatibility", "--rendering-driver", "opengl3",
             "--use_immersive",
+            "--verbose",
         ),
     );
 
