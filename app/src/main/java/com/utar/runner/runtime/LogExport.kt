@@ -31,6 +31,8 @@ object LogExport {
             }
             addSection("report.txt", buildReport(packFile, backend))
             addSection("pck-patch.log", PckPatchLog.contents(context))
+            addSection("scripts-dump.txt", scriptDump(context).orEmpty())
+            addSection("main-stall.txt", mainStall(context).orEmpty())
             addSection("godot-logcat.txt", capturedLogcat(context).orEmpty())
             addSection("godot.log", godotLog(context).orEmpty())
             writer.flush()
@@ -77,6 +79,12 @@ object LogExport {
         }
         return sections.joinToString("\n\n").takeLast(MAX_SECTION_CHARS)
     }
+
+    private fun mainStall(context: Context): String? =
+        File(context.filesDir, "logs/main-stall.txt")
+            .takeIf { it.isFile }
+            ?.let { runCatching { it.readText() }.getOrNull() }
+            ?.takeLast(MAX_SECTION_CHARS)
 
     private fun capturedLogcat(context: Context): String? =
         File(context.filesDir, "logs/godot-logcat.txt")

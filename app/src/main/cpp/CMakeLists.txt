@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(utarcore SHARED
         core/md5.cpp
         core/pck_engine.cpp
+        core/sparse_copy.cpp
         core/library_set.cpp
         core/gdext_rewriter.cpp
         core/script_patcher.cpp

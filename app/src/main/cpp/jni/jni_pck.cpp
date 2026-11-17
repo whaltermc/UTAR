@@ -1,13 +1,9 @@
 #include "jni_common.h"
 #include "pck_engine.h"
-#include "md5.h"
 
 #include <algorithm>
-#include <fstream>
-#include <set>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <dirent.h>
 #include <fcntl.h>
 
 extern "C" {
@@ -146,102 +142,4 @@ Java_com_utar_runner_core_NativeCore_pckWriteNew(JNIEnv *env, jobject, jstring t
 	return JNI_TRUE;
 }
 
-// --- font scan ------------------------------------------------------------------
-
-JNIEXPORT jlong JNICALL
-Java_com_utar_runner_core_NativeCore_pckFontScan(JNIEnv *env, jobject, jlong handle, jlong max_bytes) {
-	g_lastError.clear();
-	utarcore::PckFile *pck = reinterpret_cast<utarcore::PckFile *>(handle);
-	if (pck == nullptr) {
-		setError("Pack is not open.");
-		return 0;
-	}
-	int count = 0;
-	int bad = 0;
-	for (size_t i = 0; i < pck->entryCount(); i++) {
-		const utarcore::PckEntry &entry = pck->entry(i);
-		std::string ext = lowerExt(entry.path);
-		if (!isFontExt(ext)) continue;
-		if (entry.isEncrypted() || entry.size <= 0) {
-			bad++;
-			continue;
-		}
-		if ((int64_t)entry.size > max_bytes) {
-			continue;
-		}
-		std::vector<uint8_t> data;
-		std::string error;
-		if (!pck->readEntry(i, data, (uint64_t)max_bytes, error)) {
-			bad++;
-			continue;
-		}
-		uint8_t digest[16];
-		utarcore::md5_buffer(data.data(), data.size(), digest);
-		bool integrity = (std::memcmp(digest, entry.md5, 16) == 0);
-		std::string format = fontFormat(data);
-		count++;
-		if (!integrity) bad++;
-
-	}
-	return ( (jlong)count << 32 ) | (jlong)(bad & 0xFFFFFFFF);
-}
-
-JNIEXPORT jint JNICALL
-Java_com_utar_runner_core_NativeCore_extractFontFiles(JNIEnv *env, jobject, jlong handle, jstring dstDirStr) {
-	g_lastError.clear();
-	utarcore::PckFile *pck = reinterpret_cast<utarcore::PckFile *>(handle);
-	if (pck == nullptr) {
-		setError("Pack is not open.");
-		return -1;
-	}
-	std::string dstDir = jstringToStd(env, dstDirStr);
-	mkdir(dstDir.c_str(), 0755);
-
-	int count = 0;
-	for (size_t i = 0; i < pck->entryCount(); i++) {
-		const utarcore::PckEntry &e = pck->entry(i);
-		if (e.isEncrypted()) continue;
-		if (!isFontPath(e.path)) continue;
-
-		std::vector<uint8_t> data;
-		std::string error;
-		if (!pck->readEntry(i, data, 64L * 1024 * 1024, error)) continue;
-
-		// Strip "res://" prefix, build destination path under dstDir.
-		std::string outPath = e.path;
-		if (outPath.compare(0, 6, "res://") == 0) outPath = outPath.substr(6);
-		std::string fullPath = dstDir + "/" + outPath;
-
-		// Create all parent directories (single-level mkdir() misses nested paths such as
-		// fonts/.godot/imported/*.fontdata, which left every font unextracted on device).
-		auto mkdir_p = [](const std::string &path) {
-			std::string acc;
-			for (size_t i = 0; i <= path.size(); i++) {
-				if (i == path.size() || path[i] == '/') {
-					if (!acc.empty() && acc != "/") {
-						::mkdir(acc.c_str(), 0755);
-					}
-					if (i < path.size()) {
-						acc += path[i];
-					}
-				} else {
-					acc += path[i];
-				}
-			}
-		};
-		{
-			size_t lastSlash = fullPath.find_last_of('/');
-			if (lastSlash != std::string::npos) {
-				mkdir_p(fullPath.substr(0, lastSlash));
-			}
-		}
-
-		std::ofstream f(fullPath, std::ios::binary | std::ios::trunc);
-		if (!f) continue;
-		f.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
-		f.close();
-		count++;
-	}
-	return count;
-}
 } // extern "C"

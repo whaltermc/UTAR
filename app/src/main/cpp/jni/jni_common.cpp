@@ -101,36 +101,3 @@ std::string lowerExt(const std::string &path) {
 	for (char &c : ext) c = (char)std::tolower((unsigned char)c);
 	return ext;
 }
-
-bool isFontExt(const std::string &ext) {
-	static const std::set<std::string> exts = { "ttf","otf","ttc","otc","woff","woff2","fnt","fontdata" };
-	return exts.count(ext) > 0;
-}
-
-std::string fontFormat(const std::vector<uint8_t> &data) {
-	if (data.size() < 4) return "empty";
-	uint32_t magic = (uint32_t(data[0]) << 24) | (uint32_t(data[1]) << 16) |
-		(uint32_t(data[2]) << 8) | uint32_t(data[3]);
-	switch (magic) {
-		case 0x00010000: return "truetype";
-		case 0x4F54544F: return "opentype";
-		case 0x74746366: return "ttc";
-		case 0x774F4646: return "woff";
-		case 0x774F4632: return "woff2";
-		case 0x52535243: return "godot-resource";
-		case 0x52534343: return "godot-resource-compressed";
-		default: return "unknown";
-	}
-}
-
-bool isFontPath(const std::string &path) {
-	std::string lower = path;
-	for (char &c : lower) c = (char)std::tolower((unsigned char)c);
-	const size_t n = lower.size();
-	return (n >= 4 && lower.compare(n - 4, 4, ".ttf") == 0) ||
-		(n >= 4 && lower.compare(n - 4, 4, ".otf") == 0) ||
-		(n >= 4 && lower.compare(n - 4, 4, ".ttc") == 0) ||
-		(n >= 5 && lower.compare(n - 5, 5, ".woff") == 0) ||
-		(n >= 6 && lower.compare(n - 6, 6, ".woff2") == 0) ||
-		(n >= 9 && lower.compare(n - 9, 9, ".fontdata") == 0);
-}

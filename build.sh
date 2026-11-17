@@ -60,6 +60,7 @@ export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$ANDROID_HOME/ndk/$NDK_VERSION}"
 
 # --- FMOD Studio SDK -------------------------------------------------------
 
+FMOD_AVAILABLE=1
 if [ ! -d "$FMOD_DIR/core/inc" ] || [ ! -d "$FMOD_DIR/studio/inc" ]; then
     tarball="${FMOD_TARBALL:-}"
     if [ -z "$tarball" ]; then
@@ -70,18 +71,29 @@ if [ ! -d "$FMOD_DIR/core/inc" ] || [ ! -d "$FMOD_DIR/studio/inc" ]; then
             [ -f "$candidate" ] && { tarball="$candidate"; break; }
         done
     fi
-    [ -n "$tarball" ] && [ -f "$tarball" ] || die \
-        "FMOD SDK not found. Put fmodstudioapi20214android.tar.gz in Downloads or set FMOD_TARBALL."
-    say "Extracting FMOD SDK from $tarball"
-    mkdir -p "$ROOT/runtime"
-    tar -xzf "$tarball" -C "$ROOT/runtime"
+    if [ -n "$tarball" ] && [ -f "$tarball" ]; then
+        say "Extracting FMOD SDK from $tarball"
+        mkdir -p "$ROOT/runtime"
+        tar -xzf "$tarball" -C "$ROOT/runtime"
+    else
+        # The packaged libraries under natives/android/<abi>/ are committed, so the runner can
+        # still be assembled without the (proprietary, unreleased) SDK tarball. Only the FMOD
+        # extension itself is then left at its committed build.
+        FMOD_AVAILABLE=0
+        say "FMOD Studio SDK not found — using the packaged FMOD libraries and skipping the libfmod_extension rebuild"
+        printf '     Put fmodstudioapi20214android.tar.gz in Downloads, or set FMOD_TARBALL/FMOD_SDK_ROOT to rebuild it.\n'
+    fi
 fi
 
 for abi in $ABIS; do
-    for lib in "$FMOD_DIR/core/lib/$abi/libfmod.so" "$FMOD_DIR/studio/lib/$abi/libfmodstudio.so"; do
-        [ -f "$lib" ] || die "FMOD library missing: $lib"
+    if [ "$FMOD_AVAILABLE" -eq 1 ] && [ -f "$FMOD_DIR/core/lib/$abi/libfmod.so" ]; then
         mkdir -p "$ROOT/natives/android/$abi"
-        cp -f "$lib" "$ROOT/natives/android/$abi/"
+        cp -f "$FMOD_DIR/core/lib/$abi/libfmod.so" "$ROOT/natives/android/$abi/"
+        cp -f "$FMOD_DIR/studio/lib/$abi/libfmodstudio.so" "$ROOT/natives/android/$abi/"
+    fi
+    for lib in "$ROOT/natives/android/$abi/libfmod.so" "$ROOT/natives/android/$abi/libfmodstudio.so"; do
+        [ -f "$lib" ] || die \
+            "FMOD runtime library missing: $lib. Install the FMOD Studio Android SDK (see docs/FMOD.md)."
     done
 done
 

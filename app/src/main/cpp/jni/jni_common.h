@@ -31,8 +31,5 @@ std::vector<std::pair<std::string, std::vector<uint8_t>>> pairUp(
 void closeFdGuard(int *fd);
 
 std::string lowerExt(const std::string &path);
-bool isFontExt(const std::string &ext);
-std::string fontFormat(const std::vector<uint8_t> &data);
-bool isFontPath(const std::string &path);
 
 #endif // UTARCORE_JNI_COMMON_H

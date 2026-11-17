@@ -93,6 +93,7 @@ private:
 
 	int m_fd = -1;
 	uint64_t m_file_size = 0;
+	bool m_source_sparse = false;
 	uint32_t m_pack_version = 0;
 	uint32_t m_engine_major = 0;
 	uint32_t m_engine_minor = 0;

@@ -12,6 +12,7 @@ rewrites desktop-only GDExtensions for Android, and exposes a native C++ core
 app/      Android app: Compose UI, PCK install/patch, Godot game activity, JNI core
 natives/  sources for the game's GDExtensions (build output is not committed)
 engine/   runtime capability header shared by launcher/JNI
+docs/     FMOD integration and GDScript API reference
 runtime/  FMOD Studio SDK (local only, not committed)
 logs/     exported session/crash logs (not committed)
 ```
@@ -20,7 +21,9 @@ logs/     exported session/crash logs (not committed)
 
 - JDK 17, Android SDK 34, NDK 23.2.8568313 (natives) / 29.0.14206865 (app core)
 - Godot Android library 4.1.4 — `org.godotengine:godot:4.1.4.stable` from Maven Central (official, never a custom AAR)
-- Godot 4.1.4 `godot-cpp` and FMOD Studio API 2.02.14 Android package to build the natives
+- Godot 4.1.4 `godot-cpp` to build the natives
+- FMOD Studio API 2.02.14 for Android to rebuild the FMOD extension (optional — prebuilt
+  libraries ship in `natives/android/<abi>/`, see [docs/FMOD.md](docs/FMOD.md))
 
 ## Build
 
@@ -29,7 +32,8 @@ logs/     exported session/crash logs (not committed)
 ```
 
 Extracts the FMOD SDK, fetches godot-cpp, builds the native extensions for `arm64-v8a`,
-then runs `:app:assembleDebug`. Set `ABIS="arm64-v8a x86_64"` to add another ABI, or pass
+then runs `:app:assembleDebug`. A missing FMOD SDK tarball is not fatal: the build keeps the
+committed FMOD libraries and skips rebuilding `libfmod_extension.so`. Set `ABIS="arm64-v8a x86_64"` to add another ABI, or pass
 another Gradle task (e.g. `./build.sh :app:assembleRelease`). To build only the APK:
 
 ```bash
@@ -54,11 +58,12 @@ All heavy I/O and byte-precision work lives in `app/src/main/cpp/` (C++17, stati
 ### Fast startup / no re-indexing
 
 - The staged pack is validated by size + mtime only (`GameInstaller.ensureStaged`); no hashing, no copy on a matching stage.
-- The parsed PCK directory is cached in a sidecar `game.pck.meta` keyed by size+mtime, so re-opens (font pass, script pass, engine mount) skip directory parsing; entries are stored with absolute offsets.
+- The parsed PCK directory is cached in a sidecar `game.pck.meta` keyed by size+mtime, so re-opens (script pass, engine mount) skip directory parsing; entries are stored with absolute offsets.
 - `PckFile::findEntry` uses an `unordered_map` (O(1)) instead of a linear scan, critical for 211 k-entry packs.
 - Entry reads use `pread()` at recorded offsets; payloads are never copied into RAM wholesale and the pack is never extracted into loose files.
 - Full page-cache warmup was deliberately removed: reading 3+ GB before the engine starts only delays the first frame; the compact index is loaded on demand.
-- Fonts are extracted once per pack (stamp-keyed) and reused.
+- Launch does no pack I/O of its own: staging is a size+mtime check, and the engine is the only reader.
+- Sparse staging: the import copy and the pack rewrite write only allocated source extents and skip zero-filled padding, then size the file with `ftruncate()` — untouched regions stay holes instead of gigabytes of zeros (`core/sparse_copy.cpp`).
 
 ### Splitting the pack
 
@@ -73,7 +78,7 @@ Timing is captured at:
 - header parse / directory parse / entry registration (within `parseIndex`)
 - Godot setup (pack indexed) in `GameActivity` → `SessionLog`/`DebugLog`
 - first frame drawn → `DebugLog.timing`
-- font extraction / renderer alignment in `HomeViewModel`
+- renderer alignment in `HomeViewModel`
 
 Profile with both small packs and the 3.5 GB / 211 k-entry pack; compare cache-hit vs.
 cold-parse open times. No custom virtual filesystem or asset preloading is introduced.
@@ -101,6 +106,18 @@ startup and its native heap from the launcher UI.
 | Auto | none |
 | Vulkan | `--rendering-method mobile --rendering-driver vulkan` |
 | GLES | `--rendering-method gl_compatibility --rendering-driver opengl3` |
+
+## FMOD audio
+
+Audio goes through FMOD Studio 2.02.14. The runner ships FMOD Core and Studio (`libfmod.so`,
+`libfmodstudio.so`), FMOD's Java bridge (`app/libs/fmod.jar` → `org.fmod.FMOD`) and its own
+Android build of the fmod-for-godot GDExtension (`libfmod_extension.so`, entry symbol
+`fmod_library_init`). `GameActivity` loads both native libraries and calls
+`org.fmod.FMOD.init()` before the engine starts, and `close()` on destroy; a device without the
+FMOD libraries logs `FMOD bridge unavailable` and runs without audio instead of crashing.
+
+The full reference — exposed GDScript classes and methods, node types, bank loading, build
+flags and troubleshooting — is in [docs/FMOD.md](docs/FMOD.md).
 
 ## Logs
 

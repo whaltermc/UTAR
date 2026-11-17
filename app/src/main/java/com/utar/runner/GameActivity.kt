@@ -56,6 +56,7 @@ class GameActivity : FullScreenGodotApp() {
     }
 
     @Volatile private var readySignaled = false
+    @Volatile private var fmodReady = false
 
     private var createdAt = 0L
     private var showLoading by mutableStateOf(true)
@@ -79,11 +80,19 @@ class GameActivity : FullScreenGodotApp() {
         SessionLog.mark("GameActivity.onCreate: start")
         // FMOD's Android runtime needs its Java bridge (org.fmod.FMOD.init) before any
         // native FMOD call; the engine loads the FMOD extension during super.onCreate.
-        // Mirrors UTAP's FmodPlugin (System.loadLibrary + org.fmod.FMOD.init).
-        System.loadLibrary("fmod")
-        System.loadLibrary("fmodstudio")
-        org.fmod.FMOD.init(this)
-        SessionLog.mark("GameActivity.onCreate: FMOD java bridge initialized")
+        // Mirrors UTAP's FmodPlugin (System.loadLibrary + org.fmod.FMOD.init). A build
+        // without the FMOD libraries still starts: the extension then fails to load and the
+        // game runs without audio instead of crashing before the engine exists.
+        fmodReady = runCatching {
+            System.loadLibrary("fmod")
+            System.loadLibrary("fmodstudio")
+            org.fmod.FMOD.init(this)
+        }.onFailure {
+            SessionLog.w("FMOD bridge unavailable (${it.javaClass.simpleName}: ${it.message})")
+        }.isSuccess
+        if (fmodReady) {
+            SessionLog.mark("GameActivity.onCreate: FMOD java bridge initialized")
+        }
         SessionLog.mark("GameActivity.onCreate: Godot setup begins (UI thread blocks until the pack is indexed)")
         val setupStart = SystemClock.elapsedRealtime()
         // Start capturing Godot engine logcat before super.onCreate() so boot-time engine
@@ -243,7 +252,10 @@ class GameActivity : FullScreenGodotApp() {
         SessionLog.mark("GameActivity destroyed at +${destroyMs}ms")
         super.onDestroy()
         // Release the FMOD java bridge like UTAP's FmodPlugin.onMainDestroy.
-        org.fmod.FMOD.close()
+        if (fmodReady) {
+            runCatching { org.fmod.FMOD.close() }
+            fmodReady = false
+        }
         MainThreadWatchdog.stop()
         GameLogCapture.stop()
         GameLogCapture.preserveGodotLog(filesDir)

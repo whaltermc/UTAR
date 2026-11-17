@@ -283,35 +283,6 @@ class GameInstaller(private val context: Context) {
             addedFiles = result.added.size
         }
 
-        // Extract font source files so Godot can open them with a real file descriptor at runtime.
-        // Without this, Godot's !fd error breaks text rendering in 3D scenes (blackscreen).
-        runCatching {
-            val fontsDir = File(context.filesDir, "fonts").apply { mkdirs() }
-            val extracted = pack.extractFontFiles(fontsDir.absolutePath)
-            PckPatchLog.mark("Install: extracted $extracted font file(s) to ${fontsDir.path}")
-
-            // Patch .fontdata files to reference user://fonts/ so Godot finds the extracted fonts.
-            fontsDir.walk().filter { it.name.endsWith(".fontdata", ignoreCase = true) }.forEach { fontDataFile ->
-                runCatching {
-                    val content = fontDataFile.readText(Charsets.UTF_8)
-                    val sourceRegex = Regex("""source\s*=\s*"([^"]+)"""")
-                    val patchedContent = sourceRegex.replace(content) { match ->
-                        val originalPath = match.groupValues[1]
-                        val fileName = originalPath.substringAfterLast('/').substringAfterLast('\\')
-                        """source = "user://fonts/$fileName""""
-                    }
-                    if (patchedContent != content) {
-                        fontDataFile.writeText(patchedContent, Charsets.UTF_8)
-                        PckPatchLog.i("Patched font data: ${fontDataFile.name}")
-                    }
-                }.onFailure {
-                    PckPatchLog.w("Couldn't patch ${fontDataFile.name}: ${it.message}")
-                }
-            }
-        }.onFailure {
-            PckPatchLog.w("Font extraction failed: ${it.message}")
-        }
-
         // Record the staged pack's cheap identity (size + lastModified) and keep the source
         // URI around so later launches can validate — and re-copy — without any hashing.
         prefs.recordStagedPack(RunnerPrefs.StagedPackInfo(target.length(), target.lastModified()))
@@ -631,18 +602,10 @@ object NativeCore {
     /** Computes MD5 of [data], returning 16 bytes. */
     external fun md5(data: ByteArray): ByteArray
 
-    // --- font scan ------------------------------------------------------------------------------
-
-    /** Scans font entries in the open pack; returns count in high 32 bits and bad count in low 32 bits. */
-    external fun pckFontScan(handle: Long, maxBytes: Long): Long
-
     // --- script dump ----------------------------------------------------------------------------
 
     /** Writes logs/scripts-dump.txt for the open pack; returns source count or -1. */
     external fun scriptDump(handle: Long, logsDir: String, maxChars: Int): Int
-
-    /** Extracts font source files and .fontdata from the open pack to [dstDir]; returns count or -1. */
-    external fun extractFontFiles(handle: Long, dstDir: String): Int
 
     // --- file copy ------------------------------------------------------------------------------
 
@@ -895,14 +858,8 @@ class PckPack private constructor(
         return RewriteResult(effectiveReplacements.keys.toList(), newFiles.keys.toList(), target.length())
     }
 
-    /** Native font diagnostics scan (heavy I/O + MD5) run in JNI. */
-    fun fontScan(maxBytes: Long): Long = NativeCore.pckFontScan(handle, maxBytes)
-
     /** Native script dump writer (heavy I/O) run in JNI. */
     fun scriptDump(logsDir: String, maxChars: Int): Int = NativeCore.scriptDump(handle, logsDir, maxChars)
-
-    /** Extracts font source files and .fontdata from the pack to [dstDir]; returns count or -1. */
-    fun extractFontFiles(dstDir: String): Int = NativeCore.extractFontFiles(handle, dstDir)
 
     /** Releases the native handle; further reads fail. Called automatically by the finalizer. */
     override fun close() {

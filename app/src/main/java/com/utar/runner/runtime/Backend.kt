@@ -22,7 +22,7 @@ enum class Backend(
     ),
     COMPATIBILITY(
         label = "Compatibility (GLES3)",
-        summary = "OpenGL ES 3 compatibility renderer with automatically generated GLES3 shader overrides.",
+        summary = "OpenGL ES 3 compatibility renderer with the game's original shaders.",
         engineArgs = listOf(
             "--rendering-method", "gl_compatibility", "--rendering-driver", "opengl3",
             "--use_immersive",

@@ -1,6 +1,7 @@
 #include "pck_engine.h"
 
 #include "md5.h"
+#include "sparse_copy.h"
 
 #include <chrono>
 
@@ -402,6 +403,7 @@ PckFile *PckFile::open(const std::string &p_path, std::string &r_error) {
 	PckFile *pack = new PckFile();
 	pack->m_fd = fd;
 	pack->m_file_size = uint64_t(stat_result.st_size);
+	pack->m_source_sparse = fileIsSparse(fd);
 
 	if (pack->loadCache(p_path, r_error)) {
 		auto cache_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -416,7 +418,7 @@ PckFile *PckFile::open(const std::string &p_path, std::string &r_error) {
 		return nullptr;
 	}
 	// Persist the parsed index as a sidecar cache so subsequent opens (including
-	// the engine's own mounts and our font/script passes) skip re-parsing the
+	// the engine's own mounts and our script pass) skip re-parsing the
 	// 211k-entry directory. A cache write failure never aborts the open.
 	pack->saveCache(p_path);
 	auto open_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -551,19 +553,6 @@ bool PckFile::rewrite(
 		return true;
 	};
 
-	auto write_zeros = [&](uint64_t count, uint64_t offset) -> bool {
-		std::vector<uint8_t> zeros(static_cast<size_t>(std::min<uint64_t>(count, COPY_BUFFER)), 0);
-		uint64_t done = 0;
-		while (done < count) {
-			size_t chunk = size_t(std::min<uint64_t>(count - done, COPY_BUFFER));
-			if (!pwrite_all(zeros.data(), chunk, offset + done)) {
-				return false;
-			}
-			done += chunk;
-		}
-		return true;
-	};
-
 	bool ok = true;
 	uint8_t header[96];
 	write_u32(header, MAGIC);
@@ -604,41 +593,31 @@ bool PckFile::rewrite(
 			write_u32(index.data() + at, item.entry ? item.entry->flags : 0);
 			at += 4;
 		}
-		ok = pwrite_all(index.data(), uint64_t(at), 96) && write_zeros(file_base - 96 - index_size, 96 + index_size);
+		ok = pwrite_all(index.data(), uint64_t(at), 96);
 	}
 
 	uint64_t written = file_base;
 	if (ok) {
-		std::vector<uint8_t> buffer(COPY_BUFFER);
 		for (auto &item : planned) {
 			uint64_t start = file_base + item.relative_offset;
 			if (start > written) {
-				ok = write_zeros(start - written, written);
-				if (!ok) {
-					break;
-				}
+				// Padding is left unwritten: the gap stays a hole, so only real payload bytes
+				// are flushed instead of megabytes of zeros.
 				written = start;
 			}
 			if (item.payload) {
 				ok = pwrite_all(item.payload->data(), item.size, written);
 			} else {
-				uint64_t remaining = item.size;
-				uint64_t position = item.entry->offset;
-				while (remaining > 0) {
-					size_t chunk = size_t(std::min<uint64_t>(remaining, COPY_BUFFER));
-					if (pread(m_fd, buffer.data(), chunk, off_t(position)) != ssize_t(chunk)) {
-						r_error = "Unexpected end of pack while copying " + item.entry->path;
-						ok = false;
-						break;
+				uint64_t copied = 0;
+				if (!sparseCopyRange(m_fd, out_fd, item.entry->offset, written, item.size,
+						m_source_sparse, nullptr, nullptr, copied, r_error)) {
+					if (r_error.empty()) {
+						r_error = "Couldn't copy " + item.entry->path;
 					}
-					if (!pwrite_all(buffer.data(), chunk, written)) {
-						ok = false;
-						break;
-					}
-					position += chunk;
-					written += chunk;
-					remaining -= chunk;
+					ok = false;
+					break;
 				}
+				written += item.size;
 			}
 			if (!ok) {
 				break;
@@ -652,6 +631,12 @@ bool PckFile::rewrite(
 		}
 	}
 
+	if (ok) {
+		ok = ftruncate(out_fd, off_t(file_base + cursor)) == 0;
+		if (!ok) {
+			r_error = "couldn't size the rewritten pack";
+		}
+	}
 	close(out_fd);
 	if (!ok) {
 		unlink(temp_path.c_str());
@@ -727,19 +712,6 @@ bool PckFile::writeNew(
 		}
 		return true;
 	};
-	auto write_zeros = [&](uint64_t count, uint64_t offset) -> bool {
-		std::vector<uint8_t> zeros(static_cast<size_t>(std::min<uint64_t>(count, COPY_BUFFER)), 0);
-		uint64_t done = 0;
-		while (done < count) {
-			size_t chunk = size_t(std::min<uint64_t>(count - done, COPY_BUFFER));
-			if (!pwrite_all(zeros.data(), chunk, offset + done)) {
-				return false;
-			}
-			done += chunk;
-		}
-		return true;
-	};
-
 	bool ok = true;
 	uint8_t header[96];
 	write_u32(header, MAGIC);
@@ -775,19 +747,22 @@ bool PckFile::writeNew(
 			write_u32(index.data() + at, 0);
 			at += 4;
 		}
-		ok = pwrite_all(index.data(), uint64_t(at), 96) && write_zeros(file_base - 96 - index_size, 96 + index_size);
+		ok = pwrite_all(index.data(), uint64_t(at), 96);
 	}
+
 	if (ok) {
 		uint64_t written = file_base;
 		for (auto &item : planned) {
 			uint64_t start = file_base + item.relative_offset;
 			if (start > written) {
-				ok = write_zeros(start - written, written);
 				written = start;
 			}
 			ok = ok && pwrite_all(item.file->second.data(), item.size, written);
 			written += item.size;
 		}
+	}
+	if (ok) {
+		ok = ftruncate(out_fd, off_t(file_base + cursor)) == 0;
 	}
 	close(out_fd);
 	if (!ok) {

@@ -32,13 +32,14 @@ Patches are extension-only. Core game behavior is never modified:
 - No script patching, no `project.binary` renderer overrides, no `.ctex` texture downgrades, no GLES3 shader patching.
 
 ## Key flows
-- Install: copy pack → parse index → scan APK natives → rewrite .gdextension configs → rewrite pack → extract fonts → start GameActivity.
-- Launch: ensureStaged (size+mtime) → font extraction (stamp-keyed) → start GameActivity in `:godot` process with `--main-pack`.
+- Install: sparse copy pack → parse index → scan APK natives → rewrite .gdextension configs → rewrite pack (sparse) → start GameActivity.
+- Launch: ensureStaged (size+mtime) → start GameActivity in `:godot` process with `--main-pack`. No font pass, no pack open.
 
 ## PCK (libutarcore)
 - `PckFile::open` tries sidecar `.meta` cache first (size+mtime keyed), else `parseIndex`; saves cache after parse.
 - `findEntry` uses unordered_map (O(1)).
 - Reads use `pread` at recorded offsets; no full load, no extraction.
+- Copy/rewrite are sparse (`core/sparse_copy.cpp`): only allocated extents are written, zero gaps are left as holes and the size is set with `ftruncate`.
 - `rewrite` streams copy with replacements/additions; untouched payloads copied byte-for-byte.
 
 ## JNI
@@ -50,6 +51,13 @@ Patches are extension-only. Core game behavior is never modified:
 - `./gradlew :app:test` runs JUnit tests exercising native core via JNI.
 - Must copy rebuilt .so to `app/src/test/resources/libutarcore.so`.
 
+## Audio (FMOD)
+- `GameActivity.onCreate` loads `fmod` + `fmodstudio` and calls `org.fmod.FMOD.init(this)` before `super.onCreate`; `onDestroy` calls `FMOD.close()`. Failure is non-fatal (logged, game runs silent).
+- `libfmod_extension.so` comes from `natives/fmod-for-godot` and must keep exporting `fmod_library_init` (the pack's `fmod.gdextension` entry symbol).
+- `libfmod.so`/`libfmodstudio.so` are excluded from GDExtension matching in `library_set.cpp`.
+- `docs/FMOD.md` — user-facing API reference and troubleshooting.
+
 ## Docs
 - `README.md` — user-facing documentation.
+- `docs/FMOD.md` — FMOD integration + GDScript API reference.
 - This file — AI-facing project context.
